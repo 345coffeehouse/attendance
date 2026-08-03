@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-<!-- saved from url=(0228)file:///Users/someonelikemayf/Library/Application%20Support/Claude/local-agent-mode-sessions/56305a0a-d4c7-47bf-93c5-78ddc08150bd/9ab9fdb9-0e1f-4f9e-a472-203b10a98794/local_07a066f5-fc23-41d0-8aad-51be1880e69d/outputs/index.html -->
-<html lang="en" style="--accent: #0f766e; --accent-dark: #0c615a; --accent-soft: #e2efee;"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-
+<html lang="en">
+<head>
+<meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f766e">
-<title>3:45 Coffee House — Attendance</title>
-<link rel="icon" href="data:image/svg+xml,&lt;svg xmlns=&#39;http://www.w3.org/2000/svg&#39; viewBox=&#39;0 0 100 100&#39;&gt;&lt;text y=&#39;.9em&#39; font-size=&#39;90&#39;&gt;%F0%9F%95%92&lt;/text&gt;&lt;/svg&gt;">
+<title>Attendance</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕒</text></svg>">
 <style>
   :root{
     --accent:#0f766e;
@@ -224,7 +224,7 @@
 <body>
 
 <!-- ============================ KIOSK ============================ -->
-<div id="kiosk" class="">
+<div id="kiosk">
   <div class="wrap">
 
     <!-- STEP 1: pick name -->
@@ -232,72 +232,23 @@
       <div class="card head">
         <div class="spread" style="align-items:flex-start">
           <div>
-            <h1 id="orgName" style="font-size:24px">3:45 Coffee House</h1>
-            <div class="muted small" id="orgSub">Staff time in &amp; time out</div>
+            <h1 id="orgName" style="font-size:24px">Attendance</h1>
+            <div class="muted small" id="orgSub">Time in &amp; time out</div>
           </div>
           <div class="center">
-            <div class="clock" id="bigClock" style="font-size:30px">10:54 PM</div>
-            <div class="tiny muted" id="bigDate">Monday, August 3, 2026</div>
+            <div class="clock" id="bigClock" style="font-size:30px">--:--</div>
+            <div class="tiny muted" id="bigDate"></div>
           </div>
         </div>
       </div>
       <div class="card">
         <label class="f">Select your name <span style="color:var(--danger)">*</span></label>
         <input id="empSearch" type="search" placeholder="Search your name…" autocomplete="off">
-        <div class="emp-list" id="empList"><button class="emp" data-id="msd7f45v59hyvb">
-      <span class="avatar">AB</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Allen Bilonoac</span>
-        <span class="small muted">Cook-Asst. Barista</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button><button class="emp" data-id="msd70jfh2gv99j">
-      <span class="avatar">AM</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Annamarie Maglasang</span>
-        <span class="small muted">Cook</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button><button class="emp" data-id="msd70jfhmbuljw">
-      <span class="avatar">CJ</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Cyrhea Jean Prado</span>
-        <span class="small muted">Barista-Cashier</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button><button class="emp" data-id="msd78452hucsjy">
-      <span class="avatar">DF</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Daniel Fil Divino</span>
-        <span class="small muted">Head Barista</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button><button class="emp" data-id="msd70jfhu5icoc">
-      <span class="avatar">EA</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Edelyn Atubang</span>
-        <span class="small muted">Cashier-Cook</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button><button class="emp" data-id="msd8caxlspl3d5">
-      <span class="avatar">JM</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Junie Manuel Salvador</span>
-        <span class="small muted">Asst. Barista-Asst. Cook</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button><button class="emp" data-id="msd8aol8b5ucyl">
-      <span class="avatar">KK</span>
-      <span class="grow">
-        <span class="nm" style="display:block">Kristein Kate Avelino</span>
-        <span class="small muted">Barista-Cashier</span>
-      </span>
-      <span class="pill out">OUT</span>
-    </button></div>
+        <div class="emp-list" id="empList"></div>
       </div>
       <div class="footer-link noprint">
-        <span class="pill syncBadge in" title="">Synced</span>
-        &nbsp; <a href="file:///Users/someonelikemayf/Library/Application%20Support/Claude/local-agent-mode-sessions/56305a0a-d4c7-47bf-93c5-78ddc08150bd/9ab9fdb9-0e1f-4f9e-a472-203b10a98794/local_07a066f5-fc23-41d0-8aad-51be1880e69d/outputs/index.html#" id="toAdmin">Admin dashboard</a>
+        <span class="pill syncBadge out">Local only</span>
+        &nbsp; <a href="#" id="toAdmin">Admin dashboard</a>
       </div>
     </section>
 
@@ -345,7 +296,7 @@
           <span class="pill in" id="pAction">TIME IN</span>
         </div>
         <div class="cam-shell" id="camShell">
-          <video id="video" autoplay="" playsinline="" muted=""></video>
+          <video id="video" autoplay playsinline muted></video>
           <div class="cam-msg hide" id="camMsg"></div>
         </div>
         <div style="margin:14px 0 4px" id="geoStrip"></div>
@@ -392,7 +343,7 @@
         <div style="text-align:left" id="dSummary"></div>
         <button class="btn primary block" id="dDone" style="margin-top:18px">Done</button>
         <div class="tiny muted" style="margin-top:10px">Returning to home in <span id="dCount">8</span>s</div>
-        <div style="margin-top:8px"><span class="pill syncBadge in" title="">Synced</span></div>
+        <div style="margin-top:8px"><span class="pill syncBadge out">Local only</span></div>
       </div>
     </section>
 
@@ -404,9 +355,9 @@
   <div class="topbar noprint">
     <div class="topbar-in">
       <div class="row">
-        <strong style="font-size:16px" id="adminOrg">3:45 Coffee House · Admin</strong>
-        <span class="pill out" id="adminClock">10:54 PM</span>
-        <span class="pill syncBadge in" title="">Synced</span>
+        <strong style="font-size:16px" id="adminOrg">Admin</strong>
+        <span class="pill out" id="adminClock">--:--</span>
+        <span class="pill syncBadge out">Local only</span>
       </div>
       <div class="row">
         <button class="btn sm" id="btnSyncNow">⟳ Sync</button>
@@ -425,204 +376,16 @@
     </div>
   </div>
   <div class="wrap admin">
-    <div id="t-dash" class="tabpane">
-    <div class="stat-grid">
-      <div class="stat"><div class="k">Currently in</div><div class="v">0<span style="font-size:15px;color:var(--muted);font-weight:600"> / 7</span></div></div>
-      <div class="stat"><div class="k">Hours today</div><div class="v">0.00</div></div>
-      <div class="stat"><div class="k">Payroll today</div><div class="v" style="font-size:22px">₱0.00</div></div>
-      <div class="stat"><div class="k">This period</div><div class="v" style="font-size:22px">₱0.00</div><div class="tiny muted">Aug 1 (Sat) – Aug 15 (Sat) · 0.0 hrs</div></div>
-    </div>
-
-    
-
-    <div class="card">
-      <div class="spread" style="margin-bottom:12px">
-        <h3 class="sec-title" style="margin:0">Today — Monday, August 3, 2026</h3>
-        <button class="btn sm" id="dashAdd">+ Manual entry</button>
-      </div>
-      <div class="tbl-scroll"><table>
-    <thead><tr><th>Employee</th><th>Status</th><th>First in</th><th>Last out</th><th class="num">Hours</th><th class="num">Pay</th></tr></thead>
-    <tbody><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">AM</span>
-        <span><strong>Annamarie Maglasang</strong><br><span class="tiny muted">Cook</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">EA</span>
-        <span><strong>Edelyn Atubang</strong><br><span class="tiny muted">Cashier-Cook</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">CJ</span>
-        <span><strong>Cyrhea Jean Prado</strong><br><span class="tiny muted">Barista-Cashier</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">DF</span>
-        <span><strong>Daniel Fil Divino</strong><br><span class="tiny muted">Head Barista</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">AB</span>
-        <span><strong>Allen Bilonoac</strong><br><span class="tiny muted">Cook-Asst. Barista</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">KK</span>
-        <span><strong>Kristein Kate Avelino</strong><br><span class="tiny muted">Barista-Cashier</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr><tr>
-      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">JM</span>
-        <span><strong>Junie Manuel Salvador</strong><br><span class="tiny muted">Asst. Barista-Asst. Cook</span></span></div></td>
-      <td><span class="pill dangerp">ABSENT</span></td>
-      <td>— </td>
-      <td>—</td>
-      <td class="num">—</td>
-      <td class="num">—</td>
-    </tr></tbody></table></div>
-    </div></div>
+    <div id="t-dash" class="tabpane"></div>
     <div id="t-records" class="tabpane hide"></div>
     <div id="t-payroll" class="tabpane hide"></div>
     <div id="t-people" class="tabpane hide"></div>
-    <div id="t-settings" class="tabpane hide">
-    <div class="card">
-      <h3 class="sec-title">Branding</h3>
-      <div class="grid2">
-        <div class="field"><label class="f">Business name</label><input id="sOrg" value="3:45 Coffee House"></div>
-        <div class="field"><label class="f">Tagline</label><input id="sTag" value="Staff time in &amp; time out"></div>
-      </div>
-      <div class="grid2">
-        <div class="field"><label class="f">Accent colour</label><input type="color" id="sAccent" value="#0f766e" style="height:44px;padding:4px"></div>
-        <div class="field"><label class="f">Currency symbol</label><input id="sCur" value="₱" maxlength="3"></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3 class="sec-title">Hours &amp; overtime</h3>
-      <div class="grid3">
-        <div class="field"><label class="f">Regular hours / day</label><input type="number" id="sStd" step="0.5" min="1" max="24" value="8"></div>
-        <div class="field"><label class="f">OT multiplier</label><input type="number" id="sOt" step="0.05" min="1" value="1"></div>
-        <div class="field"><label class="f">Round hours to (min)</label><select id="sRound">
-          <option value="1">1 min</option><option value="5" selected="">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="30">30 min</option></select></div>
-      </div>
-      <div class="grid3">
-        <div class="field"><label class="f">Unpaid break (min)</label><input type="number" id="sBreak" min="0" step="5" value="0"></div>
-        <div class="field"><label class="f">…applied past (hrs)</label><input type="number" id="sBreakAfter" min="0" step="0.5" value="0"></div>
-        <div class="field"><label class="f">Max shift length (hrs)</label><input type="number" id="sMax" min="1" max="24" value="14.5"></div>
-      </div>
-      <div class="grid3">
-        <div class="field"><label class="f">Scheduled start</label><input type="time" id="sStart" value="08:00"></div>
-        <div class="field"><label class="f">Grace period (min)</label><input type="number" id="sGrace" min="0" value="5"></div>
-        <div class="field"><label class="f">Pay period</label><select id="sPeriod">
-          <option value="weekly">Weekly (Mon–Sun)</option>
-          <option value="semi" selected="">Semi-monthly (1–15, 16–end)</option>
-          <option value="monthly">Monthly</option></select></div>
-      </div>
-      <div class="note">Example: 9h shift → 0m break deducted → 9.00h paid = 8h regular + 1.00h OT at ×1.</div>
-    </div>
-
-    <div class="card">
-      <h3 class="sec-title">Optional deductions (% of gross)</h3>
-      <div class="grid3">
-        <div class="field"><label class="f">SSS %</label><input type="number" id="sSss" step="0.1" min="0" value="0"></div>
-        <div class="field"><label class="f">PhilHealth %</label><input type="number" id="sPhil" step="0.1" min="0" value="0"></div>
-        <div class="field"><label class="f">Pag-IBIG (fixed ₱)</label><input type="number" id="sPag" step="1" min="0" value="0"></div>
-      </div>
-      <div class="note">Leave at 0 to skip. These are simple estimates — check the current SSS/PhilHealth contribution tables for exact amounts.</div>
-    </div>
-
-    <div class="card">
-      <h3 class="sec-title">Clock-in rules</h3>
-      <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">
-    <input type="checkbox" id="sPhoto" checked="" style="width:18px;height:18px;margin-top:2px;flex:none">
-    <span><strong style="font-size:14.5px">Require a photo</strong><br><span class="small muted">Selfie captured at every time in and time out.</span></span></label>
-      <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">
-    <input type="checkbox" id="sLoc" checked="" style="width:18px;height:18px;margin-top:2px;flex:none">
-    <span><strong style="font-size:14.5px">Capture GPS location</strong><br><span class="small muted">Coordinates + accuracy saved with each entry. Entries still save if location is denied.</span></span></label>
-      <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">
-    <input type="checkbox" id="sPin" style="width:18px;height:18px;margin-top:2px;flex:none">
-    <span><strong style="font-size:14.5px">Require employee PIN</strong><br><span class="small muted">Extra check before the camera. Only applies to employees who have a PIN set.</span></span></label>
-      <div class="grid3" style="margin-top:14px">
-        <div class="field"><label class="f">Shop latitude</label><input id="sLat" value="" placeholder="7.0731"></div>
-        <div class="field"><label class="f">Shop longitude</label><input id="sLng" value="" placeholder="125.6128"></div>
-        <div class="field"><label class="f">Radius (m)</label><input type="number" id="sRad" min="10" value="150"></div>
-      </div>
-      <button class="btn sm" id="useHere">📍 Use my current location as the shop</button>
-      <div class="note" style="margin-top:10px">Optional. If set, each entry shows how far the employee was from the shop. Nothing is blocked — you just see the distance.</div>
-    </div>
-
-    <div class="card">
-      <h3 class="sec-title">Admin PIN</h3>
-      <div class="grid2">
-        <div class="field"><label class="f">Dashboard PIN</label><input id="sPinAdmin" inputmode="numeric" maxlength="6" value="1234"></div>
-      </div>
-      <div class="note">This is a convenience lock only. Anyone who opens this page on this device can read the stored data through the browser. Don't put anything you wouldn't put in a shared spreadsheet.</div>
-    </div>
-
-    <div class="card" style="border-left:3px solid var(--accent)">
-      <h3 class="sec-title">Google Sheets sync</h3>
-      <p class="small muted" style="margin-top:0">Sends every clock-in to a Google Sheet in your Drive, with the selfies saved to a Drive folder. This is what lets staff use their own phones while you see everything in one place. Setup instructions are in <strong>GOOGLE-SHEETS-SETUP.md</strong>.</p>
-      <div class="field"><label class="f">Web app URL</label>
-        <input id="sSyncUrl" value="https://script.google.com/macros/s/AKfycbx94rOMNmX_RIPWplS_694gCnkkPI8T_9xqkcQ5k4lb7Sq_JrZuQk8BE1SJsSJtlVFehg/exec" placeholder="https://script.google.com/macros/s/AKfy…/exec"></div>
-      <div class="grid2">
-        <div class="field"><label class="f">Secret key</label><input id="sSyncSec" value="kielscoffee2021*" placeholder="must match the SECRET in your script"></div>
-        <div class="field"><label class="f">This device is called</label><input id="sDevice" value="May&#39;s Macbook"></div>
-      </div>
-      <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">
-    <input type="checkbox" id="sSyncPhotos" checked="" style="width:18px;height:18px;margin-top:2px;flex:none">
-    <span><strong style="font-size:14.5px">Upload selfies to Drive</strong><br><span class="small muted">Turn off to sync only times and locations. Uses far less data on mobile.</span></span></label>
-      <div class="row wrap-r" style="margin-top:14px">
-        <button class="btn sm primary" id="syncTest">Test connection</button>
-        <button class="btn sm" id="syncPushAll">⬆ Upload all local records</button>
-        <button class="btn sm" id="syncPullNow">⬇ Pull from Sheet</button>
-        <button class="btn sm" id="syncOpen">Open the Sheet</button>
-      </div>
-      <div id="syncMsg" class="small" style="margin-top:12px"></div>
-    </div>
-
-    <div class="card">
-      <h3 class="sec-title">Data &amp; backup</h3>
-      <div class="row wrap-r" style="margin-bottom:12px">
-        <button class="btn sm" id="bkExport">⬇ Export backup (JSON)</button>
-        <button class="btn sm" id="bkExportPhotos">⬇ Export with photos</button>
-        <button class="btn sm" id="bkImport">⬆ Restore backup</button>
-        <button class="btn sm danger" id="bkPurge">🗑 Purge old photos</button>
-      </div>
-      <input type="file" id="bkFile" accept="application/json" class="hide">
-      <div class="small muted" id="storeInfo">0 records · 7 employees · 0 photos · 0.8 KB of record data · 0.0 MB used of ~10240 MB available</div>
-      <div class="note" style="margin-top:12px"><strong>Important:</strong> data lives in this browser on this device only. Different phone = different data. Export a backup weekly, and before clearing browser data or switching devices.</div>
-    </div>
-
-    <div class="card">
-      <div class="row wrap-r">
-        <button class="btn primary" id="saveSet">Save settings</button>
-        <button class="btn" id="resetSet">Reset to defaults</button>
-      </div>
-    </div></div>
+    <div id="t-settings" class="tabpane hide"></div>
   </div>
 </div>
 
 <div id="modalRoot"></div>
-<div id="toast" class="">Sync failed: Failed to fetch</div>
+<div id="toast"></div>
 
 <script>
 /* =====================================================================
@@ -703,20 +466,59 @@ const DEFAULT_SETTINGS = {
   adminPin: "1234",
   sssRate: 0, philhealthRate: 0, pagibigFixed: 0,   // optional deductions
   syncUrl: "", syncSecret: "", syncPhotos: true,    // Google Sheets backend
+  holidayPremiums: true,
+  holidays: [],                                     // [{date,name,type}] type: regular|special|working
 };
+
+/* Philippine holidays — Proclamation No. 1006 (2026). Eid al-Fitr and Eid al-Adha
+   are proclaimed separately each year, so add them by hand when announced. */
+const PH_HOLIDAYS_2026 = [
+  { date: "2026-01-01", name: "New Year's Day", type: "regular" },
+  { date: "2026-02-17", name: "Chinese New Year", type: "special" },
+  { date: "2026-02-25", name: "EDSA People Power Anniversary", type: "working" },
+  { date: "2026-04-02", name: "Maundy Thursday", type: "regular" },
+  { date: "2026-04-03", name: "Good Friday", type: "regular" },
+  { date: "2026-04-04", name: "Black Saturday", type: "special" },
+  { date: "2026-04-09", name: "Araw ng Kagitingan", type: "regular" },
+  { date: "2026-05-01", name: "Labor Day", type: "regular" },
+  { date: "2026-06-12", name: "Independence Day", type: "regular" },
+  { date: "2026-08-21", name: "Ninoy Aquino Day", type: "special" },
+  { date: "2026-08-31", name: "National Heroes Day", type: "regular" },
+  { date: "2026-11-01", name: "All Saints' Day", type: "special" },
+  { date: "2026-11-02", name: "All Souls' Day", type: "special" },
+  { date: "2026-11-30", name: "Bonifacio Day", type: "regular" },
+  { date: "2026-12-08", name: "Feast of the Immaculate Conception", type: "special" },
+  { date: "2026-12-24", name: "Christmas Eve", type: "special" },
+  { date: "2026-12-25", name: "Christmas Day", type: "regular" },
+  { date: "2026-12-30", name: "Rizal Day", type: "regular" },
+  { date: "2026-12-31", name: "Last Day of the Year", type: "special" },
+];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 let SETTINGS = Object.assign({}, DEFAULT_SETTINGS, load(LS.set, {}));
 let EMPLOYEES = load(LS.emp, null);
 let RECORDS = load(LS.rec, []);
 
+/* Sample staff exist only so a brand-new install isn't an empty screen.
+   A device opened through a staff setup link skips them entirely, and they
+   are cleared automatically the moment a real roster arrives from the Sheet. */
+const ARRIVED_VIA_LINK = /[#&]s=/.test(location.hash || "");
 if (!EMPLOYEES) {
-  EMPLOYEES = [
-    { id: uid(), name: "Juan Dela Cruz", role: "Barista",  rate: 90,  pin: "1111", active: true },
-    { id: uid(), name: "Maria Santos",   role: "Barista",  rate: 90,  pin: "2222", active: true },
-    { id: uid(), name: "Ana Reyes",      role: "Shift Lead", rate: 110, pin: "3333", active: true },
+  EMPLOYEES = ARRIVED_VIA_LINK ? [] : [
+    { id: uid(), name: "Juan Dela Cruz", role: "Barista",  rate: 90,  pin: "1111", active: true, demo: true },
+    { id: uid(), name: "Maria Santos",   role: "Barista",  rate: 90,  pin: "2222", active: true, demo: true },
+    { id: uid(), name: "Ana Reyes",      role: "Shift Lead", rate: 110, pin: "3333", active: true, demo: true },
   ];
   save(LS.emp, EMPLOYEES);
   save(LS.set, SETTINGS);
+}
+
+/** Drop leftover sample staff once the real roster is known. */
+function dropDemoStaff() {
+  const before = EMPLOYEES.length;
+  EMPLOYEES = EMPLOYEES.filter(e => !e.demo || RECORDS.some(r => r.empId === e.id));
+  if (EMPLOYEES.length !== before) persistEmp();
+  return before - EMPLOYEES.length;
 }
 
 const persistEmp = () => save(LS.emp, EMPLOYEES);
@@ -773,13 +575,40 @@ const PhotoDB = (() => {
 const OUTBOX_KEY = "att.outbox.v1";
 const DEVICE_KEY = "att.device.v1";
 
+/* ---- one-link staff setup -------------------------------------------
+   The share link carries the web app URL + key so a staff phone configures
+   itself on first open. The key is a shared write token that already lives
+   on every staff device, not a personal password. --------------------- */
+function makeSetupLink() {
+  const payload = JSON.stringify({ u: SETTINGS.syncUrl, k: SETTINGS.syncSecret, n: SETTINGS.orgName });
+  const b64 = btoa(unescape(encodeURIComponent(payload))).replace(/=+$/, "");
+  return location.origin + location.pathname + "#s=" + b64;
+}
+function applySetupLink() {
+  const m = (location.hash || "").match(/[#&]s=([A-Za-z0-9+/=_-]+)/);
+  if (!m) return false;
+  try {
+    const json = decodeURIComponent(escape(atob(m[1])));
+    const d = JSON.parse(json);
+    if (!d.u || !d.k) return false;
+    SETTINGS.syncUrl = d.u;
+    SETTINGS.syncSecret = d.k;
+    if (d.n) SETTINGS.orgName = d.n;
+    persistSet();
+    history.replaceState(null, "", location.pathname + location.search);
+    return true;
+  } catch (e) { return false; }
+}
+
 /** Cheap change-detector for the employee roster. */
 function rosterHash() {
-  const s = JSON.stringify(EMPLOYEES.map(e => [e.id, e.name, e.role, e.rate, e.pin, e.active !== false]));
+  const s = JSON.stringify(EMPLOYEES.map(e => [e.id, e.name, e.role, e.rate, e.pin, e.active !== false, e.shiftStart, (e.restDays || []).join("")]));
   let h = 0;
   for (let i = 0; i < s.length; i++) { h = (h << 5) - h + s.charCodeAt(i); h |= 0; }
   return String(h);
 }
+
+const driveIdFrom = url => (String(url || "").match(/\/d\/([^/]+)/) || [])[1] || "";
 
 function deviceName() {
   let d = localStorage.getItem(DEVICE_KEY);
@@ -846,7 +675,7 @@ const Sync = {
       inGeo: rec.inGeo, outGeo: rec.outGeo,
       inNote: rec.inNote, outNote: rec.outNote,
       edited: !!rec.edited,
-      employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0) },
+      employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
       inPhotoId: rec.inPhotoDriveId || "", outPhotoId: rec.outPhotoDriveId || ""
     };
     if (SETTINGS.syncPhotos) {
@@ -860,8 +689,13 @@ const Sync = {
   async flush(silent = true) {
     if (!this.on) return { skipped: true };
     let ids = this.outbox();
-    if (!ids.length) return { sent: 0 };
     if (!navigator.onLine) { this.status = "offline"; paintSyncBadges(); return { offline: true }; }
+    if (!ids.length) {
+      // nothing to send, but the roster may still be out of date
+      try { await this.pushEmployeesIfChanged(); this.status = "ok"; } catch (e) { }
+      paintSyncBadges();
+      return { sent: 0 };
+    }
 
     this.status = "sending"; paintSyncBadges();
     const batchSize = SETTINGS.syncPhotos ? 4 : 25;   // photos make payloads big
@@ -940,6 +774,44 @@ const Sync = {
     EMPLOYEES.push(Object.assign({}, incoming, { fromSheet: false }));
   },
 
+  /**
+   * Lightweight refresh for the clock-in screen. Pulls the staff list and any
+   * shift that is still open, so ANY device shows the real roster and can
+   * close a shift that was started on a different phone.
+   */
+  async kioskRefresh(force = false) {
+    if (!this.on) return { skipped: true };
+    const last = Number(localStorage.getItem("att.kioskSync") || 0);
+    if (!force && Date.now() - last < 45000) return { throttled: true };
+    try {
+      const res = await this.call({ action: "kiosk" }, 25000);
+      (res.employees || []).forEach(e => this.reconcileEmployee(e));
+      if ((res.employees || []).length) dropDemoStaff();
+      let opened = 0;
+      (res.open || []).forEach(r => {
+        if (!r.id || !r.inAt) return;
+        if (RECORDS.some(x => x.id === r.id)) return;
+        RECORDS.push({
+          id: r.id, empId: r.empId, date: r.date, inAt: r.inAt, outAt: null,
+          inPhoto: null, outPhoto: null, inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: "",
+          inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: "",
+          inGeo: null, outGeo: null, inNote: r.inNote || "", outNote: "",
+          edited: false, remote: true, device: r.device || "", createdAt: r.inAt
+        });
+        opened++;
+      });
+      persistEmp();
+      if (opened) persistRec();
+      localStorage.setItem("att.kioskSync", String(Date.now()));
+      this.status = "ok"; this.lastError = "";
+      paintSyncBadges();
+      return { employees: (res.employees || []).length, opened };
+    } catch (e) {
+      this.status = "error"; this.lastError = e.message; paintSyncBadges();
+      return { error: e.message };
+    }
+  },
+
   /** Pull everything from the Sheet and merge into local records. */
   async pull() {
     if (!this.on) throw new Error("Sync isn't set up yet");
@@ -947,6 +819,7 @@ const Sync = {
     let added = 0, updated = 0;
     // roster first, so incoming records attach to the right person
     (res.employees || []).forEach(e => this.reconcileEmployee(e));
+    if ((res.employees || []).length) dropDemoStaff();
     (res.records || []).forEach(r => {
       if (!r.id) return;
       const local = RECORDS.find(x => x.id === r.id);
@@ -995,12 +868,45 @@ window.addEventListener("online", () => Sync.flush(true));
 setInterval(() => { if (Sync.on && Sync.outbox().length) Sync.flush(true); }, 60000);
 
 /* ------------------------- payroll engine ------------------------- */
+/** Look up a date in the holiday calendar. */
+function holidayOn(dateKey, st) {
+  if (!st.holidayPremiums) return null;
+  const h = (st.holidays || []).find(x => x.date === dateKey);
+  return h && h.type !== "working" ? h : null;
+}
+/** Is this date one of the employee's rest days? */
+function isRestDay(dateKey, emp) {
+  const rd = emp && emp.restDays;
+  if (!rd || !rd.length) return false;
+  return rd.indexOf(parseKey(dateKey).getDay()) !== -1;
+}
+/**
+ * DOLE premium multipliers, expressed against the plain hourly rate.
+ * Overtime on a premium day earns an extra 30% of that day's hourly rate.
+ */
+function dayRates(holiday, rest, st) {
+  const ordinaryOt = st.otMultiplier || 1.25;
+  const type = holiday ? holiday.type : "";
+  let reg;
+  if (type === "regular") reg = rest ? 2.6 : 2.0;
+  else if (type === "special") reg = rest ? 1.5 : 1.3;
+  else if (rest) reg = 1.3;
+  else reg = 1.0;
+  return { reg: reg, ot: reg === 1.0 ? ordinaryOt : reg * 1.3 };
+}
+function dayLabel(holiday, rest) {
+  if (holiday && holiday.type === "regular") return rest ? "Regular holiday + rest day" : "Regular holiday";
+  if (holiday && holiday.type === "special") return rest ? "Special day + rest day" : "Special non-working";
+  if (rest) return "Rest day";
+  return "Ordinary day";
+}
+
 /**
  * Compute one shift. Pure function so it can be unit-tested.
- * @returns {worked, paid, regular, ot, gross, lateMin, breakDeducted, flags[]}
+ * @returns {worked, paid, regular, ot, gross, base, premium, lateMin, breakDeducted, flags[]}
  */
 function computeShift(rec, emp, st) {
-  const out = { worked: 0, paid: 0, regular: 0, ot: 0, gross: 0, lateMin: 0, breakDeducted: 0, flags: [] };
+  const out = { worked: 0, paid: 0, regular: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, breakDeducted: 0, dayType: "Ordinary day", mult: 1, flags: [] };
   if (!rec.inAt) { out.flags.push("no-in"); return out; }
   if (!rec.outAt) { out.flags.push("open"); return out; }
 
@@ -1027,21 +933,36 @@ function computeShift(rec, emp, st) {
   const ot = Math.max(0, paid - std);
   const rate = Number(emp?.rate || 0);
 
+  // day type → premium multipliers
+  const hol = holidayOn(rec.date, st);
+  const rest = isRestDay(rec.date, emp);
+  const mult = dayRates(hol, rest, st);
+
   out.worked = ms / 3600000;
   out.paid = paid;
   out.regular = regular;
   out.ot = ot;
-  out.gross = regular * rate + ot * rate * (st.otMultiplier || 1.25);
+  out.dayType = dayLabel(hol, rest);
+  out.holidayName = hol ? hol.name : "";
+  out.mult = mult.reg;
+  out.base = regular * rate + ot * rate * (st.otMultiplier || 1.25);
+  out.gross = regular * rate * mult.reg + ot * rate * mult.ot;
+  out.premium = out.gross - out.base;
 
-  // lateness (informational)
-  if (st.shiftStart) {
-    const [sh, sm] = st.shiftStart.split(":").map(Number);
+  // lateness — measured against this employee's own schedule
+  const start = (emp && emp.shiftStart) || st.shiftStart;
+  if (start && !rest && !hol) {
+    const [sh, sm] = start.split(":").map(Number);
     const d = new Date(rec.inAt);
-    const sched = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm, 0, 0);
+    let sched = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm, 0, 0);
+    // a shift starting late in the evening may be clocked in just after midnight
+    if (rec.inAt - sched.getTime() < -12 * 3600000) sched = new Date(sched.getTime() - 86400000);
     const lateMs = rec.inAt - sched.getTime() - (st.gracePeriodMin || 0) * 60000;
     if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
   }
   if (ot > 0) out.flags.push("ot");
+  if (hol) out.flags.push("holiday");
+  if (rest) out.flags.push("restday");
   return out;
 }
 
@@ -1122,7 +1043,22 @@ function renderEmpList() {
     .filter(e => !q || e.name.toLowerCase().includes(q) || (e.role || "").toLowerCase().includes(q))
     .sort((a, b) => a.name.localeCompare(b.name));
   const el = $("#empList");
-  if (!list.length) { el.innerHTML = `<div class="empty">No employees found.</div>`; return; }
+  if (!list.length) {
+    el.innerHTML = q
+      ? `<div class="empty">Nobody matches “${esc(q)}”.</div>`
+      : Sync.on
+        ? `<div class="empty">Waiting for the staff list…<br><span class="tiny">If this doesn't fill in, ask May to open Settings and press <strong>⟳ Sync</strong>.</span>
+             <div style="margin-top:14px"><button class="btn sm" id="retryRoster">Try again</button></div></div>`
+        : `<div class="empty">No employees yet. Add them from the Admin dashboard.</div>`;
+    const retry = $("#retryRoster", el);
+    if (retry) retry.onclick = async () => {
+      retry.disabled = true; retry.textContent = "Checking…";
+      const r = await Sync.kioskRefresh(true);
+      if (r && r.error) { toast("Couldn't reach the staff list: " + r.error, 5000); retry.disabled = false; retry.textContent = "Try again"; }
+      else renderEmpList();
+    };
+    return;
+  }
   el.innerHTML = list.map(e => {
     const open = openRecord(e.id);
     return `<button class="emp" data-id="${e.id}">
@@ -1363,6 +1299,8 @@ function resetKiosk() {
   $("#empSearch").value = "";
   renderEmpList();
   showScreen("s-pick");
+  // quietly catch up on the roster and anyone clocked in elsewhere
+  if (Sync.on) Sync.kioskRefresh(false).then(r => { if (r && !r.throttled && !r.error) renderEmpList(); });
 }
 
 /* ---------- kiosk wiring ---------- */
@@ -1605,14 +1543,16 @@ function filteredRecords() {
 function drawRecordTable() {
   const list = filteredRecords();
   if (!list.length) { $("#rTable").innerHTML = `<div class="card"><div class="empty">No records in this range.</div></div>`; return; }
-  let tH = 0, tOt = 0, tP = 0;
+  let tH = 0, tOt = 0, tP = 0, tPrem = 0;
   const rows = list.map(r => {
     const e = empById(r.empId); const c = computeShift(r, e, SETTINGS);
-    tH += c.paid; tOt += c.ot; tP += c.gross;
+    tH += c.paid; tOt += c.ot; tP += c.gross; tPrem += c.premium;
     const flags = [];
     if (c.flags.includes("open")) flags.push(`<span class="pill warnp">NO TIME OUT</span>`);
     if (c.flags.includes("late")) flags.push(`<span class="pill warnp">${c.lateMin}m LATE</span>`);
     if (c.flags.includes("ot")) flags.push(`<span class="pill in">OT</span>`);
+    if (c.flags.includes("holiday")) flags.push(`<span class="pill dangerp" title="${esc(c.holidayName)} · ${esc(c.dayType)}">${Math.round(c.mult * 100)}%</span>`);
+    else if (c.flags.includes("restday")) flags.push(`<span class="pill warnp" title="Rest day">REST 130%</span>`);
     if (c.flags.includes("too-long")) flags.push(`<span class="pill dangerp">CHECK</span>`);
     if (r.edited) flags.push(`<span class="pill out">EDITED</span>`);
     if (r.remote) flags.push(`<span class="pill out" title="Came from the Google Sheet${r.device ? " · " + esc(r.device) : ""}">FROM SHEET</span>`);
@@ -1629,6 +1569,7 @@ function drawRecordTable() {
       <td>${r.outAt ? fmtTime(r.outAt) + " " + geo(r.outGeo) : `<span class="pill warnp">OPEN</span>`}</td>
       <td class="num">${c.paid ? c.paid.toFixed(2) : "—"}</td>
       <td class="num">${c.ot ? c.ot.toFixed(2) : "—"}</td>
+      <td class="num">${c.premium ? money(c.premium) : "—"}</td>
       <td class="num">${c.gross ? money(c.gross) : "—"}</td>
       <td>${flags.join(" ") || ""}</td>
       <td class="noprint"><button class="btn sm" data-edit="${r.id}">Edit</button></td>
@@ -1636,9 +1577,9 @@ function drawRecordTable() {
   }).join("");
   $("#rTable").innerHTML = `<div class="tbl-scroll"><table>
     <thead><tr><th>Date</th><th>Employee</th><th>📷</th><th>Time in</th><th>📷</th><th>Time out</th>
-    <th class="num">Hrs</th><th class="num">OT</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
+    <th class="num">Hrs</th><th class="num">OT</th><th class="num">Premium</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
     <tbody>${rows}</tbody>
-    <tfoot><tr><td colspan="6">${list.length} entries</td><td class="num">${tH.toFixed(2)}</td><td class="num">${tOt.toFixed(2)}</td><td class="num">${money(tP)}</td><td colspan="2"></td></tr></tfoot>
+    <tfoot><tr><td colspan="6">${list.length} entries</td><td class="num">${tH.toFixed(2)}</td><td class="num">${tOt.toFixed(2)}</td><td class="num">${tPrem ? money(tPrem) : "—"}</td><td class="num">${money(tP)}</td><td colspan="2"></td></tr></tfoot>
   </table></div>`;
   // lazy-load thumbs
   $$("#rTable img.thumb").forEach(async img => {
@@ -1739,12 +1680,14 @@ function payrollData() {
   EMPLOYEES.forEach(e => {
     const recs = RECORDS.filter(r => r.empId === e.id && r.date >= PF.from && r.date <= PF.to);
     if (!recs.length) return;
-    const days = new Set(), agg = { reg: 0, ot: 0, gross: 0, lateMin: 0, open: 0, shifts: 0 };
+    const days = new Set(), agg = { reg: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, open: 0, shifts: 0, premDays: 0 };
     recs.forEach(r => {
       const c = computeShift(r, e, SETTINGS);
       if (c.flags.includes("open")) agg.open++;
       if (r.outAt) { days.add(r.date); agg.shifts++; }
-      agg.reg += c.regular; agg.ot += c.ot; agg.gross += c.gross; agg.lateMin += c.lateMin;
+      if (c.premium > 0) agg.premDays++;
+      agg.reg += c.regular; agg.ot += c.ot; agg.gross += c.gross;
+      agg.base += c.base; agg.premium += c.premium; agg.lateMin += c.lateMin;
     });
     const sss = agg.gross * (Number(SETTINGS.sssRate) || 0) / 100;
     const phil = agg.gross * (Number(SETTINGS.philhealthRate) || 0) / 100;
@@ -1758,7 +1701,7 @@ function drawPayroll() {
   const rows = payrollData();
   const hasDed = (Number(SETTINGS.sssRate) || Number(SETTINGS.philhealthRate) || Number(SETTINGS.pagibigFixed)) > 0;
   if (!rows.length) { $("#pOut").innerHTML = `<div class="card"><div class="empty">No attendance in ${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}.</div></div>`; return; }
-  const t = rows.reduce((a, r) => ({ days: a.days + r.days, reg: a.reg + r.reg, ot: a.ot + r.ot, gross: a.gross + r.gross, ded: a.ded + r.ded, net: a.net + r.net }), { days: 0, reg: 0, ot: 0, gross: 0, ded: 0, net: 0 });
+  const t = rows.reduce((a, r) => ({ days: a.days + r.days, reg: a.reg + r.reg, ot: a.ot + r.ot, gross: a.gross + r.gross, premium: a.premium + r.premium, ded: a.ded + r.ded, net: a.net + r.net }), { days: 0, reg: 0, ot: 0, gross: 0, premium: 0, ded: 0, net: 0 });
   const openWarn = rows.reduce((a, r) => a + r.open, 0);
   $("#pOut").innerHTML = `
     <div class="card">
@@ -1770,7 +1713,7 @@ function drawPayroll() {
       <div class="tbl-scroll" style="margin-top:10px"><table>
         <thead><tr>
           <th>Employee</th><th class="num">Rate</th><th class="num">Days</th><th class="num">Reg hrs</th><th class="num">OT hrs</th>
-          <th class="num">Reg pay</th><th class="num">OT pay</th><th class="num">Gross</th>
+          <th class="num">Reg pay</th><th class="num">OT pay</th><th class="num">Holiday / rest premium</th><th class="num">Gross</th>
           ${hasDed ? `<th class="num">Deductions</th><th class="num">Net pay</th>` : ""}
           <th class="num">Late</th>
         </tr></thead>
@@ -1782,6 +1725,7 @@ function drawPayroll() {
           <td class="num">${r.ot ? r.ot.toFixed(2) : "—"}</td>
           <td class="num">${money(r.reg * r.e.rate)}</td>
           <td class="num">${r.ot ? money(r.ot * r.e.rate * SETTINGS.otMultiplier) : "—"}</td>
+          <td class="num">${r.premium ? `+${money(r.premium)}<br><span class="tiny muted">${r.premDays} day${r.premDays > 1 ? "s" : ""}</span>` : "—"}</td>
           <td class="num"><strong>${money(r.gross)}</strong></td>
           ${hasDed ? `<td class="num">${r.ded ? "−" + money(r.ded) : "—"}</td><td class="num"><strong>${money(r.net)}</strong></td>` : ""}
           <td class="num">${r.lateMin ? r.lateMin + "m" : "—"}</td>
@@ -1789,6 +1733,7 @@ function drawPayroll() {
         <tfoot><tr>
           <td>TOTAL (${rows.length})</td><td></td><td class="num">${t.days}</td>
           <td class="num">${t.reg.toFixed(2)}</td><td class="num">${t.ot.toFixed(2)}</td><td></td><td></td>
+          <td class="num">${t.premium ? "+" + money(t.premium) : "—"}</td>
           <td class="num">${money(t.gross)}</td>
           ${hasDed ? `<td class="num">−${money(t.ded)}</td><td class="num">${money(t.net)}</td>` : ""}
           <td></td>
@@ -1809,6 +1754,7 @@ function showPayslips() {
       <div class="kv"><span class="k">Days worked</span><span class="v">${r.days}</span></div>
       <div class="kv"><span class="k">Regular hours × ${money(r.e.rate)}</span><span class="v">${r.reg.toFixed(2)} → ${money(r.reg * r.e.rate)}</span></div>
       ${r.ot ? `<div class="kv"><span class="k">Overtime × ${money(r.e.rate * SETTINGS.otMultiplier)}</span><span class="v">${r.ot.toFixed(2)} → ${money(r.ot * r.e.rate * SETTINGS.otMultiplier)}</span></div>` : ""}
+      ${r.premium ? `<div class="kv"><span class="k">Holiday / rest-day premium (${r.premDays} day${r.premDays > 1 ? "s" : ""})</span><span class="v">+${money(r.premium)}</span></div>` : ""}
       <div class="kv"><span class="k">Gross pay</span><span class="v">${money(r.gross)}</span></div>
       ${r.sss ? `<div class="kv"><span class="k">SSS</span><span class="v">−${money(r.sss)}</span></div>` : ""}
       ${r.phil ? `<div class="kv"><span class="k">PhilHealth</span><span class="v">−${money(r.phil)}</span></div>` : ""}
@@ -1836,10 +1782,12 @@ function renderPeople() {
         <button class="btn sm primary" id="addEmp">+ Add employee</button>
       </div>
       ${EMPLOYEES.length ? `<div class="tbl-scroll"><table>
-        <thead><tr><th>Name</th><th>Position</th><th class="num">Hourly rate</th><th class="num">Daily (8h)</th><th>PIN</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Position</th><th>Schedule</th><th>Rest days</th><th class="num">Hourly rate</th><th class="num">Daily (8h)</th><th>PIN</th><th>Status</th><th></th></tr></thead>
         <tbody>${EMPLOYEES.map(e => `<tr>
           <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">${esc(initials(e.name))}</span><strong>${esc(e.name)}</strong></div></td>
           <td>${esc(e.role || "Staff")}</td>
+          <td>${e.shiftStart ? esc(e.shiftStart) + (e.shiftEnd ? "–" + esc(e.shiftEnd) : "") : `<span class="muted">${esc(SETTINGS.shiftStart)} (default)</span>`}</td>
+          <td>${(e.restDays || []).length ? (e.restDays || []).map(d => DAY_NAMES[d]).join(", ") : `<span class="muted">none</span>`}</td>
           <td class="num">${money(e.rate)}</td>
           <td class="num">${money(e.rate * SETTINGS.standardHours)}</td>
           <td>${e.pin ? "••••" : `<span class="muted">none</span>`}</td>
@@ -1868,7 +1816,19 @@ function editEmp(id) {
           <option value="1" ${e?.active !== false ? "selected" : ""}>Active</option>
           <option value="0" ${e?.active === false ? "selected" : ""}>Inactive</option></select></div>
       </div>
-      <div class="note">Daily equivalent at ${SETTINGS.standardHours}h: <span id="fDaily">—</span></div>`,
+      <h3 class="sec-title" style="margin-top:18px">Schedule</h3>
+      <div class="grid2">
+        <div class="field"><label class="f">Shift starts</label><input type="time" id="fStart" value="${esc(e?.shiftStart || SETTINGS.shiftStart)}"></div>
+        <div class="field"><label class="f">Shift ends <span class="muted" style="font-weight:400">(for reference)</span></label><input type="time" id="fEnd" value="${esc(e?.shiftEnd || "")}"></div>
+      </div>
+      <div class="field">
+        <label class="f">Rest days</label>
+        <div class="row wrap-r" id="fRest">
+          ${DAY_NAMES.map((d, i) => `<label style="display:flex;gap:5px;align-items:center;padding:7px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:14px">
+            <input type="checkbox" data-day="${i}" ${(e?.restDays || []).includes(i) ? "checked" : ""} style="width:16px;height:16px"> ${d}</label>`).join("")}
+        </div>
+      </div>
+      <div class="note">Late is measured against this person's own start time, so a closing shift is no longer flagged at 8 AM. Work on a rest day earns the 130% premium automatically.<br><br>Daily equivalent at ${SETTINGS.standardHours}h: <span id="fDaily">—</span></div>`,
     actions: [
       ...(e ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, () => { EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id); persistEmp(); renderTab(CUR_TAB); toast("Employee deleted"); }); } }] : []),
       { label: "Cancel" },
@@ -1880,7 +1840,10 @@ function editEmp(id) {
             name, role: $("#fRole", el).value.trim(),
             rate: Math.max(0, Number($("#fRate", el).value) || 0),
             pin: $("#fPin", el).value.replace(/\D/g, "").slice(0, 4),
-            active: $("#fActive", el).value === "1"
+            active: $("#fActive", el).value === "1",
+            shiftStart: $("#fStart", el).value || SETTINGS.shiftStart,
+            shiftEnd: $("#fEnd", el).value || "",
+            restDays: $$("#fRest input:checked", el).map(c => Number(c.dataset.day))
           };
           if (e) Object.assign(e, data); else EMPLOYEES.push(Object.assign({ id: uid() }, data));
           persistEmp(); Sync.pushEmployees(); close(); renderTab(CUR_TAB); toast("Saved");
@@ -1935,6 +1898,23 @@ function renderSettings() {
     </div>
 
     <div class="card">
+      <h3 class="sec-title">Holiday calendar</h3>
+      ${chk("sHolPrem", "Apply holiday &amp; rest-day premiums", s.holidayPremiums, "Turn off to pay every day at the plain rate.")}
+      <div class="row wrap-r" style="margin:14px 0">
+        <button class="btn sm" id="holAdd">+ Add a date</button>
+        <button class="btn sm" id="holLoad">Load 2026 PH holidays</button>
+        <button class="btn sm ghost" id="holClear">Clear all</button>
+      </div>
+      <div id="holList"></div>
+      <div class="note" style="margin-top:12px">
+        <strong>Rates applied to hours actually worked:</strong> regular holiday 200% · special non-working 130% · rest day 130% ·
+        regular holiday on a rest day 260% · special day on a rest day 150%. Overtime on any of these earns an extra 30% of that day's rate.
+        <br><br>You told me <strong>no work, no pay</strong>, so nobody is paid for a holiday they didn't work. If that changes, say so and I'll add it.
+        <br><br>Eid'l Fitr and Eid'l Adha are proclaimed separately each year — add them here once announced. Double-check any date against DOLE before a payout.
+      </div>
+    </div>
+
+    <div class="card">
       <h3 class="sec-title">Optional deductions (% of gross)</h3>
       <div class="grid3">
         <div class="field"><label class="f">SSS %</label><input type="number" id="sSss" step="0.1" min="0" value="${s.sssRate}"></div>
@@ -1985,6 +1965,17 @@ function renderSettings() {
       <div id="syncMsg" class="small" style="margin-top:12px"></div>
     </div>
 
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <h3 class="sec-title">Staff link</h3>
+      <p class="small muted" style="margin-top:0">Send this to your staff instead of the plain website link. Opening it once sets their phone up automatically — they get your real employee list and their clock-ins go straight to your Sheet. No settings for them to fill in.</p>
+      <div class="field"><input id="staffLink" readonly value="" onclick="this.select()" style="font-size:13px"></div>
+      <div class="row wrap-r">
+        <button class="btn sm primary" id="copyLink">📋 Copy staff link</button>
+        <button class="btn sm" id="shareLink">Share…</button>
+      </div>
+      <div class="note" style="margin-top:12px">Treat this like a shop key — anyone with it can record attendance. It does <strong>not</strong> give access to your Google account or this dashboard (that still needs your admin PIN). If it leaks, change the <code>SECRET</code> in your script, redeploy, and send a fresh link.</div>
+    </div>
+
     <div class="card">
       <h3 class="sec-title">Data &amp; backup</h3>
       <div class="row wrap-r" style="margin-bottom:12px">
@@ -2033,10 +2024,41 @@ function renderSettings() {
       syncUrl: $("#sSyncUrl").value.trim(),
       syncSecret: $("#sSyncSec").value.trim(),
       syncPhotos: $("#sSyncPhotos").checked,
+      holidayPremiums: $("#sHolPrem").checked,
     });
     setDeviceName($("#sDevice").value.trim() || deviceName());
     persistSet(); applyTheme(); paintSyncBadges(); PF.from = ""; RF.from = ""; renderSettings(); toast("Settings saved");
   };
+
+  // staff share link
+  const linkBox = $("#staffLink");
+  if (linkBox) {
+    linkBox.value = Sync.on ? makeSetupLink() : "Set up Google Sheets sync first, then save.";
+    $("#copyLink").onclick = async () => {
+      if (!Sync.on) { toast("Connect Google Sheets sync first."); return; }
+      const link = makeSetupLink();
+      try { await navigator.clipboard.writeText(link); toast("Staff link copied — paste it in your group chat"); }
+      catch (e) { linkBox.select(); toast("Press Cmd/Ctrl+C to copy the highlighted link"); }
+    };
+    $("#shareLink").onclick = async () => {
+      if (!Sync.on) { toast("Connect Google Sheets sync first."); return; }
+      const data = { title: SETTINGS.orgName + " — Attendance", text: "Tap to set up time in / time out:", url: makeSetupLink() };
+      if (navigator.share) { try { await navigator.share(data); } catch (e) { } }
+      else { linkBox.select(); toast("Sharing isn't available here — copy the link instead"); }
+    };
+  }
+
+  drawHolidays();
+  $("#holAdd").onclick = () => editHoliday(null);
+  $("#holLoad").onclick = () => {
+    const have = new Set((SETTINGS.holidays || []).map(h => h.date));
+    const added = PH_HOLIDAYS_2026.filter(h => !have.has(h.date));
+    SETTINGS.holidays = (SETTINGS.holidays || []).concat(added).sort((a, b) => a.date.localeCompare(b.date));
+    persistSet(); drawHolidays(); toast(`Added ${added.length} holiday${added.length === 1 ? "" : "s"}`);
+  };
+  $("#holClear").onclick = () => confirmBox("Remove every date from the holiday calendar?", () => {
+    SETTINGS.holidays = []; persistSet(); drawHolidays(); toast("Calendar cleared");
+  }, "Clear");
 
   const msg = (cls, html) => $("#syncMsg").innerHTML = `<div class="strip ${cls}"><span class="dot"></span><span>${html}</span></div>`;
   const needSaved = () => {
@@ -2094,6 +2116,55 @@ function renderSettings() {
   $("#bkFile").onchange = restoreBackup;
   $("#bkPurge").onclick = purgePhotos;
   storageInfo();
+}
+
+/* ---------------- holiday calendar ---------------- */
+const HOL_BADGE = { regular: `<span class="pill dangerp">REGULAR · 200%</span>`, special: `<span class="pill warnp">SPECIAL · 130%</span>`, working: `<span class="pill out">WORKING · no premium</span>` };
+function drawHolidays() {
+  const el = $("#holList"); if (!el) return;
+  const list = (SETTINGS.holidays || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const upcoming = list.filter(h => h.date >= todayKey());
+  if (!list.length) { el.innerHTML = `<div class="empty">No dates yet. Press <strong>Load 2026 PH holidays</strong> to fill this in.</div>`; return; }
+  el.innerHTML = `<div class="tbl-scroll" style="max-height:340px;overflow-y:auto"><table>
+    <thead><tr><th>Date</th><th>Day</th><th>Holiday</th><th>Type</th><th></th></tr></thead>
+    <tbody>${list.map(h => `<tr style="${h.date < todayKey() ? "opacity:.5" : ""}">
+      <td>${h.date}</td>
+      <td>${DAY_NAMES[parseKey(h.date).getDay()]}</td>
+      <td><strong>${esc(h.name)}</strong></td>
+      <td>${HOL_BADGE[h.type] || h.type}</td>
+      <td><button class="btn sm" data-hol="${h.date}">Edit</button></td>
+    </tr>`).join("")}</tbody>
+  </table></div>
+  <div class="small muted" style="margin-top:8px">${list.length} date(s) · ${upcoming.length} still upcoming</div>`;
+  $$("#holList [data-hol]").forEach(b => b.onclick = () => editHoliday(b.dataset.hol));
+}
+function editHoliday(date) {
+  const h = date ? (SETTINGS.holidays || []).find(x => x.date === date) : null;
+  modal({
+    title: h ? "Edit date" : "Add a date",
+    body: `
+      <div class="field"><label class="f">Date</label><input type="date" id="hDate" value="${esc(h?.date || todayKey())}"></div>
+      <div class="field"><label class="f">Name</label><input id="hName" value="${esc(h?.name || "")}" placeholder="e.g. Eid'l Fitr, or Kadayawan Festival"></div>
+      <div class="field"><label class="f">Type</label><select id="hType">
+        <option value="regular" ${h?.type === "regular" ? "selected" : ""}>Regular holiday — 200% if worked</option>
+        <option value="special" ${h?.type === "special" || !h ? "selected" : ""}>Special non-working — 130% if worked</option>
+        <option value="working" ${h?.type === "working" ? "selected" : ""}>Special working day — paid as normal</option>
+      </select></div>
+      <div class="note">You can add local dates too, like a Davao city holiday, as long as you know which category it falls under.</div>`,
+    actions: [
+      ...(h ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { SETTINGS.holidays = SETTINGS.holidays.filter(x => x.date !== h.date); persistSet(); close(); drawHolidays(); toast("Removed"); } }] : []),
+      { label: "Cancel" },
+      {
+        label: "Save", cls: "primary", onClick: (el, close) => {
+          const d = $("#hDate", el).value, n = $("#hName", el).value.trim(), t = $("#hType", el).value;
+          if (!d || !n) { toast("Date and name are both required"); return; }
+          SETTINGS.holidays = (SETTINGS.holidays || []).filter(x => x.date !== d && (!h || x.date !== h.date));
+          SETTINGS.holidays.push({ date: d, name: n, type: t });
+          SETTINGS.holidays.sort((a, b) => a.date.localeCompare(b.date));
+          persistSet(); close(); drawHolidays(); toast("Saved");
+        }
+      }]
+  });
 }
 
 async function storageInfo() {
@@ -2172,14 +2243,14 @@ function csv(rows) {
 function exportRecordsCsv() {
   const list = filteredRecords();
   if (!list.length) return toast("Nothing to export in this range.");
-  const rows = [["Date", "Employee", "Position", "Time in", "Time out", "Worked hrs", "Paid hrs", "Regular hrs", "OT hrs",
-    "Hourly rate", "Gross pay", "Late (min)", "In location", "Out location", "In map link", "Out map link", "Note", "Edited"]];
+  const rows = [["Date", "Day type", "Holiday", "Rate multiplier", "Employee", "Position", "Time in", "Time out", "Worked hrs", "Paid hrs", "Regular hrs", "OT hrs",
+    "Hourly rate", "Base pay", "Premium", "Gross pay", "Late (min)", "In location", "Out location", "In map link", "Out map link", "Note", "Edited"]];
   list.slice().reverse().forEach(r => {
     const e = empById(r.empId), c = computeShift(r, e, SETTINGS);
     rows.push([
-      r.date, e?.name || "deleted", e?.role || "", fmtTime(r.inAt), r.outAt ? fmtTime(r.outAt) : "NO TIME OUT",
+      r.date, c.dayType, c.holidayName || "", c.mult, e?.name || "deleted", e?.role || "", fmtTime(r.inAt), r.outAt ? fmtTime(r.outAt) : "NO TIME OUT",
       c.worked.toFixed(3), c.paid.toFixed(2), c.regular.toFixed(2), c.ot.toFixed(2),
-      e?.rate ?? "", c.gross.toFixed(2), c.lateMin || 0,
+      e?.rate ?? "", c.base.toFixed(2), c.premium.toFixed(2), c.gross.toFixed(2), c.lateMin || 0,
       r.inGeo ? `${r.inGeo.lat}, ${r.inGeo.lng} (±${r.inGeo.acc}m)` : "",
       r.outGeo ? `${r.outGeo.lat}, ${r.outGeo.lng} (±${r.outGeo.acc}m)` : "",
       mapLink(r.inGeo) || "", mapLink(r.outGeo) || "",
@@ -2193,14 +2264,15 @@ function exportPayrollCsv() {
   const rows = payrollData();
   if (!rows.length) return toast("Nothing to export.");
   const out = [[`Payroll ${PF.from} to ${PF.to}`], [],
-    ["Employee", "Position", "Hourly rate", "Days worked", "Regular hrs", "OT hrs", "Regular pay", "OT pay", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Total deductions", "NET PAY", "Late (min)", "Unclosed shifts"]];
+    ["Employee", "Position", "Hourly rate", "Days worked", "Regular hrs", "OT hrs", "Regular pay", "OT pay", "Holiday/rest premium", "Premium days", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Total deductions", "NET PAY", "Late (min)", "Unclosed shifts"]];
   rows.forEach(r => out.push([
     r.e.name, r.e.role || "", r.e.rate, r.days, r.reg.toFixed(2), r.ot.toFixed(2),
-    (r.reg * r.e.rate).toFixed(2), (r.ot * r.e.rate * SETTINGS.otMultiplier).toFixed(2), r.gross.toFixed(2),
+    (r.reg * r.e.rate).toFixed(2), (r.ot * r.e.rate * SETTINGS.otMultiplier).toFixed(2),
+    r.premium.toFixed(2), r.premDays, r.gross.toFixed(2),
     r.sss.toFixed(2), r.phil.toFixed(2), r.pag.toFixed(2), r.ded.toFixed(2), r.net.toFixed(2), r.lateMin, r.open
   ]));
-  const t = rows.reduce((a, r) => ({ g: a.g + r.gross, n: a.n + r.net }), { g: 0, n: 0 });
-  out.push([], ["TOTAL", "", "", "", "", "", "", "", t.g.toFixed(2), "", "", "", "", t.n.toFixed(2)]);
+  const t = rows.reduce((a, r) => ({ g: a.g + r.gross, n: a.n + r.net, p: a.p + r.premium }), { g: 0, n: 0, p: 0 });
+  out.push([], ["TOTAL", "", "", "", "", "", "", "", t.p.toFixed(2), "", t.g.toFixed(2), "", "", "", "", t.n.toFixed(2)]);
   download(`payroll-${PF.from}-to-${PF.to}.csv`, csv(out), "text/csv");
   toast("Payroll CSV downloaded");
 }
@@ -2208,6 +2280,7 @@ function exportPayrollCsv() {
 /* =====================================================================
    BOOT
    ===================================================================== */
+const CAME_FROM_LINK = applySetupLink();
 applyTheme();
 renderEmpList();
 paintSyncBadges();
@@ -2215,11 +2288,31 @@ $("#bigClock").textContent = fmtTime(Date.now());
 $("#bigDate").textContent = fmtDateLong(new Date());
 if (location.hash === "#admin") openAdmin();
 window.addEventListener("beforeunload", stopCam);
-if (Sync.on) setTimeout(() => Sync.flush(true), 1500);   // send anything left over from last session
+
+/* On every load: pull the staff list and any open shifts, then send whatever
+   is still queued. This is what makes one link work across every device. */
+(async () => {
+  if (!Sync.on) return;
+  if (CAME_FROM_LINK) toast("Connecting to " + SETTINGS.orgName + "…", 3000);
+  const r = await Sync.kioskRefresh(CAME_FROM_LINK);
+  if (r && r.error) { if (CAME_FROM_LINK) toast("Couldn't reach the staff list: " + r.error, 5000); }
+  else if (r && !r.throttled) {
+    renderEmpList();
+    if (CAME_FROM_LINK) toast(`Ready — ${r.employees} staff loaded`, 3000);
+  }
+  Sync.flush(true);
+})();
+
+// refresh the roster when the kiosk comes back to the foreground
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden || !Sync.on) return;
+  const r = await Sync.kioskRefresh(false);
+  if (r && !r.throttled && !r.error && !$("#s-pick").classList.contains("hide")) renderEmpList();
+});
 
 // expose for testing
-window.__att = { computeShift, periodsFor, distMeters, csv, Sync, deviceName, get SETTINGS() { return SETTINGS; }, get RECORDS() { return RECORDS; } };
+window.__att = { computeShift, periodsFor, distMeters, csv, Sync, deviceName, makeSetupLink, dropDemoStaff,
+  get SETTINGS() { return SETTINGS; }, get RECORDS() { return RECORDS; }, get EMPLOYEES() { return EMPLOYEES; } };
 </script>
-
-
-</body></html>
+</body>
+</html>
