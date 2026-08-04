@@ -466,6 +466,8 @@ const DEFAULT_SETTINGS = {
   adminPin: "1234",
   sssRate: 0, philhealthRate: 0, pagibigFixed: 0,   // optional deductions
   syncUrl: "", syncSecret: "", syncPhotos: true,    // Google Sheets backend
+  syncStaffSecret: "",         // low-privilege key; admin device only, used to build the staff link
+  syncRole: "admin",           // "admin" on your device, "staff" on anything set up from the link
   holidayPremiums: true,
   holidays: [],                                     // [{date,name,type}] type: regular|special|working
 };
@@ -576,11 +578,19 @@ const OUTBOX_KEY = "att.outbox.v1";
 const DEVICE_KEY = "att.device.v1";
 
 /* ---- one-link staff setup -------------------------------------------
-   The share link carries the web app URL + key so a staff phone configures
-   itself on first open. The key is a shared write token that already lives
-   on every staff device, not a personal password. --------------------- */
+   The share link carries the web app URL + the STAFF key, so a staff phone
+   configures itself on first open.
+
+   The staff key is deliberately low-privilege: the backend lets it submit
+   clock-ins and read the list of names, nothing else. It cannot read
+   records, see anyone's pay rate, delete entries, or change the roster.
+   Assume this link will end up somewhere you didn't intend — a screenshot,
+   a forwarded chat, an ex-employee's phone — and design accordingly.
+   The admin key never leaves your own device. -------------------------- */
 function makeSetupLink() {
-  const payload = JSON.stringify({ u: SETTINGS.syncUrl, k: SETTINGS.syncSecret, n: SETTINGS.orgName });
+  const staffKey = SETTINGS.syncStaffSecret || "";
+  if (!staffKey) return "";
+  const payload = JSON.stringify({ u: SETTINGS.syncUrl, k: staffKey, n: SETTINGS.orgName, r: "staff" });
   const b64 = btoa(unescape(encodeURIComponent(payload))).replace(/=+$/, "");
   return location.origin + location.pathname + "#s=" + b64;
 }
@@ -593,12 +603,16 @@ function applySetupLink() {
     if (!d.u || !d.k) return false;
     SETTINGS.syncUrl = d.u;
     SETTINGS.syncSecret = d.k;
+    SETTINGS.syncStaffSecret = "";        // a staff device never holds the admin key
+    SETTINGS.syncRole = d.r === "admin" ? "admin" : "staff";
     if (d.n) SETTINGS.orgName = d.n;
     persistSet();
     history.replaceState(null, "", location.pathname + location.search);
     return true;
   } catch (e) { return false; }
 }
+/** True on your laptop, false on any phone set up from the staff link. */
+function isAdminDevice() { return SETTINGS.syncRole !== "staff"; }
 
 /** Cheap change-detector for the employee roster. */
 function rosterHash() {
@@ -737,8 +751,9 @@ const Sync = {
     return { sent };
   },
 
+  /** Admin only — the Sheet's roster is the master copy and staff can't rewrite it. */
   async pushEmployees() {
-    if (!this.on) return;
+    if (!this.on || !isAdminDevice()) return;
     try {
       await this.call({ action: "pushEmployees", employees: EMPLOYEES });
       localStorage.setItem("att.rosterHash", rosterHash());
@@ -747,7 +762,7 @@ const Sync = {
 
   /** Upload the roster only when it has actually changed. */
   async pushEmployeesIfChanged() {
-    if (!this.on) return;
+    if (!this.on || !isAdminDevice()) return;
     if (localStorage.getItem("att.rosterHash") === rosterHash()) return;
     await this.pushEmployees();
   },
@@ -814,9 +829,10 @@ const Sync = {
     }
   },
 
-  /** Pull everything from the Sheet and merge into local records. */
+  /** Pull everything from the Sheet and merge into local records. Admin only. */
   async pull() {
     if (!this.on) throw new Error("Sync isn't set up yet");
+    if (!isAdminDevice()) throw new Error("This device is set up as a staff device and can't read records.");
     const res = await this.call({ action: "pull" }, 60000);
     let added = 0, updated = 0;
     // roster first, so incoming records attach to the right person
@@ -1304,7 +1320,11 @@ async function submitEntry() {
        <div class="kv"><span class="k">Timed out</span><span class="v">${fmtTime(now)}</span></div>
        <div class="kv"><span class="k">Hours worked</span><span class="v">${hm(c.paid)}${c.breakDeducted ? ` <span class="tiny muted">(−${Math.round(c.breakDeducted * 60)}m break)</span>` : ""}</span></div>
        ${c.ot > 0 ? `<div class="kv"><span class="k">Overtime</span><span class="v">${hm(c.ot)}</span></div>` : ""}
-       <div class="kv"><span class="k">Est. pay this shift</span><span class="v">${money(c.gross)}</span></div>`;
+       ${isAdminDevice() && Number(K.emp?.rate || 0) > 0
+        ? `<div class="kv"><span class="k">Est. pay this shift</span><span class="v">${money(c.gross)}</span></div>`
+        : ""}`;
+  // Staff devices never receive pay rates, so no peso figure is shown on the
+  // kiosk — which also keeps wages off a screen other people are standing near.
   }
   persistRec();
   Sync.queue(rec.id);
@@ -2030,9 +2050,17 @@ function renderSettings() {
       <div class="field"><label class="f">Web app URL</label>
         <input id="sSyncUrl" value="${esc(s.syncUrl)}" placeholder="https://script.google.com/macros/s/AKfy…/exec"></div>
       <div class="grid2">
-        <div class="field"><label class="f">Secret key</label><input id="sSyncSec" value="${esc(s.syncSecret)}" placeholder="must match the SECRET in your script"></div>
+        <div class="field"><label class="f">${isAdminDevice() ? "Admin key (this device)" : "Staff key (this device)"}</label>
+          <input id="sSyncSec" type="password" value="${esc(s.syncSecret)}" placeholder="must match ADMIN_KEY in your script"></div>
         <div class="field"><label class="f">This device is called</label><input id="sDevice" value="${esc(deviceName())}"></div>
       </div>
+      ${isAdminDevice() ? `
+      <div class="field"><label class="f">Staff key (goes in the staff link)</label>
+        <input id="sSyncStaff" type="password" value="${esc(s.syncStaffSecret)}" placeholder="must match STAFF_KEY in your script"></div>
+      <div class="note">Two different keys, both set in your Apps Script. The <strong>admin key</strong> stays on this device and can read everything. The <strong>staff key</strong> is the one you hand out — it can only record attendance and read the list of names. It cannot see pay rates, read records, or delete anything.</div>
+      ` : `
+      <div class="note">This device was set up from a staff link. It can record attendance and nothing else — it can't read records or pay rates. That's deliberate.</div>
+      `}
       ${chk("sSyncPhotos", "Upload selfies to Drive", s.syncPhotos, "Turn off to sync only times and locations. Uses far less data on mobile.")}
       <div class="row wrap-r" style="margin-top:14px">
         <button class="btn sm primary" id="syncTest">Test connection</button>
@@ -2051,7 +2079,8 @@ function renderSettings() {
         <button class="btn sm primary" id="copyLink">📋 Copy staff link</button>
         <button class="btn sm" id="shareLink">Share…</button>
       </div>
-      <div class="note" style="margin-top:12px">Treat this like a shop key — anyone with it can record attendance. It does <strong>not</strong> give access to your Google account or this dashboard (that still needs your admin PIN). If it leaks, change the <code>SECRET</code> in your script, redeploy, and send a fresh link.</div>
+      <div class="note" style="margin-top:12px">This link carries the <strong>staff key only</strong>. Someone holding it can record attendance — that's all. They cannot see anyone's pay rate, read past records, delete entries, or change the roster, and it gives no access to your Google account or this dashboard.
+      <br><br>Still treat it like a shop key. If it leaks, or when someone leaves, change <code>STAFF_KEY</code> in your script, redeploy, and send a fresh link. Your admin key and your data are untouched by that.</div>
     </div>
 
     <div class="card">
@@ -2101,9 +2130,15 @@ function renderSettings() {
       adminPin: $("#sPinAdmin").value.replace(/\D/g, "") || "1234",
       syncUrl: $("#sSyncUrl").value.trim(),
       syncSecret: $("#sSyncSec").value.trim(),
+      syncStaffSecret: $("#sSyncStaff") ? $("#sSyncStaff").value.trim() : SETTINGS.syncStaffSecret,
       syncPhotos: $("#sSyncPhotos").checked,
       holidayPremiums: $("#sHolPrem").checked,
     });
+    // a key that does both jobs is the bug we just fixed — refuse to recreate it
+    if (SETTINGS.syncStaffSecret && SETTINGS.syncStaffSecret === SETTINGS.syncSecret) {
+      SETTINGS.syncStaffSecret = "";
+      toast("Admin and staff keys must be different — staff key cleared.", 5000);
+    }
     setDeviceName($("#sDevice").value.trim() || deviceName());
     persistSet(); applyTheme(); paintSyncBadges(); PF.from = ""; RF.from = ""; renderSettings(); toast("Settings saved");
   };
@@ -2111,15 +2146,20 @@ function renderSettings() {
   // staff share link
   const linkBox = $("#staffLink");
   if (linkBox) {
-    linkBox.value = Sync.on ? makeSetupLink() : "Set up Google Sheets sync first, then save.";
+    const linkReady = () => Sync.on && isAdminDevice() && !!SETTINGS.syncStaffSecret;
+    const blocker = () =>
+      !isAdminDevice() ? "Only the admin device can create staff links."
+      : !Sync.on ? "Set up Google Sheets sync first, then save."
+      : "Fill in the Staff key above and press Save settings.";
+    linkBox.value = linkReady() ? makeSetupLink() : blocker();
     $("#copyLink").onclick = async () => {
-      if (!Sync.on) { toast("Connect Google Sheets sync first."); return; }
+      if (!linkReady()) { toast(blocker()); return; }
       const link = makeSetupLink();
       try { await navigator.clipboard.writeText(link); toast("Staff link copied — paste it in your group chat"); }
       catch (e) { linkBox.select(); toast("Press Cmd/Ctrl+C to copy the highlighted link"); }
     };
     $("#shareLink").onclick = async () => {
-      if (!Sync.on) { toast("Connect Google Sheets sync first."); return; }
+      if (!linkReady()) { toast(blocker()); return; }
       const data = { title: SETTINGS.orgName + " — Attendance", text: "Tap to set up time in / time out:", url: makeSetupLink() };
       if (navigator.share) { try { await navigator.share(data); } catch (e) { } }
       else { linkBox.select(); toast("Sharing isn't available here — copy the link instead"); }
@@ -2151,8 +2191,13 @@ function renderSettings() {
     msg("wait", "Contacting Google…");
     try {
       const r = await Sync.ping();
-      msg("ok", `Connected. The Sheet currently holds <strong>${r.records}</strong> record(s). <a href="${r.sheet}" target="_blank" rel="noopener">Open it →</a>`);
-      SETTINGS.syncSheetUrl = r.sheet; persistSet(); paintSyncBadges();
+      if (r.role === "staff") {
+        msg("ok", "Connected as a <strong>staff device</strong>. It can record attendance only — no records or pay rates are readable from here.");
+      } else {
+        msg("ok", `Connected as <strong>admin</strong>. The Sheet currently holds <strong>${r.records}</strong> record(s). <a href="${r.sheet}" target="_blank" rel="noopener">Open it →</a>`);
+        SETTINGS.syncSheetUrl = r.sheet; persistSet();
+      }
+      paintSyncBadges();
     } catch (e) { msg("err", "Couldn't connect: " + esc(e.message)); }
   };
   $("#syncPushAll").onclick = async () => {
