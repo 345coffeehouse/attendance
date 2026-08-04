@@ -352,6 +352,10 @@
 
 <!-- ============================ ADMIN ============================ -->
 <div id="admin" class="hide">
+  <div id="previewBanner" class="hide" style="background:#111;color:#fff;text-align:center;padding:8px 12px;font-size:13px">
+    👀 Previewing as a staff device would see it — your real admin access is untouched.
+    <button class="btn sm ghost" id="exitPreview" style="margin-left:10px;color:#fff;border-color:#666">Exit preview</button>
+  </div>
   <div class="topbar noprint">
     <div class="topbar-in">
       <div class="row">
@@ -501,6 +505,18 @@ let SETTINGS = Object.assign({}, DEFAULT_SETTINGS, load(LS.set, {}));
 let EMPLOYEES = load(LS.emp, null);
 let RECORDS = load(LS.rec, []);
 
+/* "Preview as staff" — lets a real admin see what a staff device sees,
+   without touching the stored syncRole or keys. Lives in sessionStorage only,
+   so it never survives a closed tab and can never cause the lockout that
+   comes from actually opening the staff link on the admin device. */
+let PREVIEW_STAFF = sessionStorage.getItem("att.previewStaff") === "1";
+function setPreviewStaff(on) {
+  PREVIEW_STAFF = on;
+  if (on) sessionStorage.setItem("att.previewStaff", "1");
+  else sessionStorage.removeItem("att.previewStaff");
+  location.reload();
+}
+
 /* Sample staff exist only so a brand-new install isn't an empty screen.
    A device opened through a staff setup link skips them entirely, and they
    are cleared automatically the moment a real roster arrives from the Sheet. */
@@ -612,7 +628,10 @@ function applySetupLink() {
   } catch (e) { return false; }
 }
 /** True on your laptop, false on any phone set up from the staff link. */
-function isAdminDevice() { return SETTINGS.syncRole !== "staff"; }
+function isAdminDevice() { return SETTINGS.syncRole !== "staff" && !PREVIEW_STAFF; }
+/* Whether this device is *really* set up as admin, ignoring any preview override.
+   Used to decide whether the preview toggle itself should be offered. */
+function isTrulyAdminDevice() { return SETTINGS.syncRole !== "staff"; }
 
 /** Cheap change-detector for the employee roster. */
 function rosterHash() {
@@ -1127,7 +1146,7 @@ function selectEmp(id) {
   K.emp = e; K.photo = null; K.geo = null; K.geoErr = null;
   $("#aAvatar").textContent = initials(e.name);
   $("#aName").textContent = e.name;
-  $("#aRole").textContent = (e.role || "Staff") + " · " + money(e.rate) + "/hr";
+  $("#aRole").textContent = e.role || "Staff";
   const open = openRecord(e.id);
   const today = RECORDS.filter(r => r.empId === e.id && r.date === todayKey());
   const doneToday = today.filter(r => r.outAt).length;
@@ -1263,7 +1282,7 @@ function requestGeo() {
     },
     err => {
       K.geoErr = err.code === 1 ? "Permission denied" : err.code === 3 ? "Timed out" : "Unavailable";
-      setGeoStrip("err", `Location ${K.geoErr.toLowerCase()} — entry will be saved without coordinates`);
+      setGeoStrip("err", `Location ${K.geoErr.toLowerCase()}${SETTINGS.requireLocation ? " — clock-in blocked. Allow location access and try again." : " — entry will be saved without coordinates"}`);
     },
     { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
   );
@@ -1278,6 +1297,16 @@ const mapLink = g => g && g.lat != null ? `https://www.google.com/maps?q=${g.lat
 
 /* ---------- confirm + submit ---------- */
 function goConfirm() {
+  if (SETTINGS.requireLocation) {
+    if (!K.geo && !K.geoErr) {
+      alert("Still getting your location — please wait a moment and try again.");
+      return;
+    }
+    if (K.geoErr) {
+      alert("Location is required to clock in. Please allow location access on your phone and try again.");
+      return;
+    }
+  }
   stopCam();
   $("#shot").src = K.photo || "";
   $("#shot").parentElement.style.display = K.photo ? "" : "none";
@@ -1424,9 +1453,11 @@ function openAdmin() {
   stopCam();
   $("#kiosk").classList.add("hide");
   $("#admin").classList.remove("hide");
+  $("#previewBanner").classList.toggle("hide", !PREVIEW_STAFF);
   renderTab(CUR_TAB);
   window.scrollTo(0, 0);
 }
+if ($("#exitPreview")) $("#exitPreview").onclick = () => setPreviewStaff(false);
 function askAdminPin() {
   const m = modal({
     title: "Admin access",
@@ -2025,7 +2056,7 @@ function renderSettings() {
     <div class="card">
       <h3 class="sec-title">Clock-in rules</h3>
       ${chk("sPhoto", "Require a photo", s.requirePhoto, "Selfie captured at every time in and time out.")}
-      ${chk("sLoc", "Capture GPS location", s.requireLocation, "Coordinates + accuracy saved with each entry. Entries still save if location is denied.")}
+      ${chk("sLoc", "Require GPS location", s.requireLocation, "Coordinates + accuracy saved with each entry. Clock-in is blocked if location is denied.")}
       ${chk("sPin", "Require employee PIN", s.requirePin, "Extra check before the camera. Only applies to employees who have a PIN set.")}
       <div class="grid3" style="margin-top:14px">
         <div class="field"><label class="f">Shop latitude</label><input id="sLat" value="${esc(s.shopLat)}" placeholder="7.0731"></div>
@@ -2043,6 +2074,14 @@ function renderSettings() {
       </div>
       <div class="note">This is a convenience lock only. Anyone who opens this page on this device can read the stored data through the browser. Don't put anything you wouldn't put in a shared spreadsheet.</div>
     </div>
+
+    ${isTrulyAdminDevice() ? `
+    <div class="card">
+      <h3 class="sec-title">Preview as staff</h3>
+      <p class="small muted" style="margin-top:0">See exactly what a staff device sees — no pay rates, no records, kiosk only. This is a view on your own device; it never touches your real admin key or your stored records.</p>
+      <button class="btn sm" id="togglePreview">${PREVIEW_STAFF ? "Exit staff preview" : "👀 Preview as staff"}</button>
+    </div>
+    ` : ""}
 
     <div class="card" style="border-left:3px solid var(--accent)">
       <h3 class="sec-title">Google Sheets sync</h3>
@@ -2102,6 +2141,8 @@ function renderSettings() {
         <button class="btn" id="resetSet">Reset to defaults</button>
       </div>
     </div>`;
+
+  if ($("#togglePreview")) $("#togglePreview").onclick = () => setPreviewStaff(!PREVIEW_STAFF);
 
   $("#saveSet").onclick = () => {
     Object.assign(SETTINGS, {
