@@ -602,7 +602,7 @@ function applySetupLink() {
 
 /** Cheap change-detector for the employee roster. */
 function rosterHash() {
-  const s = JSON.stringify(EMPLOYEES.map(e => [e.id, e.name, e.role, e.rate, e.pin, e.active !== false, e.shiftStart, (e.restDays || []).join("")]));
+  const s = JSON.stringify(EMPLOYEES.map(e => [e.id, e.name, e.role, e.rate, e.pin, e.active !== false, (e.weekSchedule || []).join("|")]));
   let h = 0;
   for (let i = 0; i < s.length; i++) { h = (h << 5) - h + s.charCodeAt(i); h |= 0; }
   return String(h);
@@ -674,8 +674,9 @@ const Sync = {
       outAt: rec.outAt ? new Date(rec.outAt).toISOString() : null,
       inGeo: rec.inGeo, outGeo: rec.outGeo,
       inNote: rec.inNote, outNote: rec.outNote,
+      restOverride: rec.restOverride || "",
       edited: !!rec.edited,
-      employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
+      employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), weekSchedule: e.weekSchedule || null, shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
       inPhotoId: rec.inPhotoDriveId || "", outPhotoId: rec.outPhotoDriveId || ""
     };
     if (SETTINGS.syncPhotos) {
@@ -796,6 +797,7 @@ const Sync = {
           inPhoto: null, outPhoto: null, inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: "",
           inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: "",
           inGeo: null, outGeo: null, inNote: r.inNote || "", outNote: "",
+          restOverride: r.restOverride || null,
           edited: false, remote: true, device: r.device || "", createdAt: r.inAt
         });
         opened++;
@@ -830,6 +832,7 @@ const Sync = {
         inPhoto: null, outPhoto: null,
         inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: r.outPhotoUrl || "",
         inNote: r.inNote || "", outNote: "",
+        restOverride: r.restOverride || null,
         edited: r.edited, remote: true, device: r.device || "", createdAt: r.inAt
       };
       if (!local) {
@@ -874,9 +877,22 @@ function holidayOn(dateKey, st) {
   const h = (st.holidays || []).find(x => x.date === dateKey);
   return h && h.type !== "working" ? h : null;
 }
-/** Is this date one of the employee's rest days? */
+/**
+ * An employee's schedule for a given date. weekSchedule[0..6] = Sun..Sat,
+ * each slot is "" (day off) or "HH:MM" (their start time that day) —
+ * this is what lets someone open Mondays and close Wednesdays instead of
+ * having one fixed shift start for every day.
+ */
+function scheduleFor(emp, dateKey) {
+  const ws = emp && emp.weekSchedule;
+  if (!ws || !ws.length) return { off: false, start: (emp && emp.shiftStart) || "" }; // no schedule set — treat as every day the same
+  const slot = ws[parseKey(dateKey).getDay()] || "";
+  return { off: !slot, start: slot };
+}
+/** Is this date one of the employee's days off? */
 function isRestDay(dateKey, emp) {
-  const rd = emp && emp.restDays;
+  if (emp && emp.weekSchedule && emp.weekSchedule.length) return scheduleFor(emp, dateKey).off;
+  const rd = emp && emp.restDays;               // legacy fallback for older employee records
   if (!rd || !rd.length) return false;
   return rd.indexOf(parseKey(dateKey).getDay()) !== -1;
 }
@@ -933,9 +949,13 @@ function computeShift(rec, emp, st) {
   const ot = Math.max(0, paid - std);
   const rate = Number(emp?.rate || 0);
 
-  // day type → premium multipliers
+  // day type → premium multipliers.
+  // rec.restOverride lets you settle shift swaps and cover shifts by hand:
+  //   "rest"     → pay the rest-day premium even though the roster says it's a work day
+  //   "ordinary" → no premium, e.g. the rest day was formally swapped in advance
   const hol = holidayOn(rec.date, st);
-  const rest = isRestDay(rec.date, emp);
+  const auto = isRestDay(rec.date, emp);
+  const rest = rec.restOverride === "rest" ? true : rec.restOverride === "ordinary" ? false : auto;
   const mult = dayRates(hol, rest, st);
 
   out.worked = ms / 3600000;
@@ -949,8 +969,8 @@ function computeShift(rec, emp, st) {
   out.gross = regular * rate * mult.reg + ot * rate * mult.ot;
   out.premium = out.gross - out.base;
 
-  // lateness — measured against this employee's own schedule
-  const start = (emp && emp.shiftStart) || st.shiftStart;
+  // lateness — measured against this employee's schedule for THIS day of the week (best-effort, not critical)
+  const start = (emp && emp.weekSchedule && emp.weekSchedule.length) ? scheduleFor(emp, rec.date).start : ((emp && emp.shiftStart) || st.shiftStart);
   if (start && !rest && !hol) {
     const [sh, sm] = start.split(":").map(Number);
     const d = new Date(rec.inAt);
@@ -963,6 +983,9 @@ function computeShift(rec, emp, st) {
   if (ot > 0) out.flags.push("ot");
   if (hol) out.flags.push("holiday");
   if (rest) out.flags.push("restday");
+  if (rec.restOverride) out.flags.push("override");
+  // worked a day the roster says they're off, and it hasn't been settled either way
+  if (auto && !rec.restOverride) out.flags.push("unscheduled");
   return out;
 }
 
@@ -1553,6 +1576,8 @@ function drawRecordTable() {
     if (c.flags.includes("ot")) flags.push(`<span class="pill in">OT</span>`);
     if (c.flags.includes("holiday")) flags.push(`<span class="pill dangerp" title="${esc(c.holidayName)} · ${esc(c.dayType)}">${Math.round(c.mult * 100)}%</span>`);
     else if (c.flags.includes("restday")) flags.push(`<span class="pill warnp" title="Rest day">REST 130%</span>`);
+    if (c.flags.includes("unscheduled")) flags.push(`<span class="pill warnp" title="Worked on a day their schedule says off — a cover shift or a swap. Open Edit to confirm whether the premium applies.">COVER?</span>`);
+    if (c.flags.includes("override")) flags.push(`<span class="pill out" title="Day type set by hand">MANUAL DAY TYPE</span>`);
     if (c.flags.includes("too-long")) flags.push(`<span class="pill dangerp">CHECK</span>`);
     if (r.edited) flags.push(`<span class="pill out">EDITED</span>`);
     if (r.remote) flags.push(`<span class="pill out" title="Came from the Google Sheet${r.device ? " · " + esc(r.device) : ""}">FROM SHEET</span>`);
@@ -1607,8 +1632,17 @@ function editRecord(id) {
         <div class="field"><label class="f">Time in</label><input type="datetime-local" id="eIn" value="${toLocalInput(r?.inAt) || toLocalInput(Date.now())}"></div>
         <div class="field"><label class="f">Time out <span class="muted" style="font-weight:400">(blank = still in)</span></label><input type="datetime-local" id="eOut" value="${toLocalInput(r?.outAt)}"></div>
       </div>
-      <div class="field"><label class="f">Note</label><input id="eNote" value="${esc(r?.inNote || "")}" placeholder="Reason for manual entry"></div>
-      <div class="note">Manual edits are tagged <strong>EDITED</strong> in the records table so you keep an audit trail.</div>`,
+      <div class="field"><label class="f">Note</label><input id="eNote" value="${esc(r?.inNote || "")}" placeholder="e.g. covering for Allen"></div>
+      <div class="field">
+        <label class="f">Day type <span class="muted" style="font-weight:400">(for swaps &amp; cover shifts)</span></label>
+        <select id="eRest">
+          <option value="" ${!r?.restOverride ? "selected" : ""}>Auto — follow their weekly schedule</option>
+          <option value="rest" ${r?.restOverride === "rest" ? "selected" : ""}>Rest day — pay the 130% premium</option>
+          <option value="ordinary" ${r?.restOverride === "ordinary" ? "selected" : ""}>Ordinary day — no premium</option>
+        </select>
+      </div>
+      <div class="note">Leave on <strong>Auto</strong> most of the time. Use this when someone <em>covers a shift on their day off</em> (choose Rest day) or when two people <em>formally swapped days</em> in advance, so no premium is owed (choose Ordinary day). Holidays are unaffected — those always follow the calendar.
+      <br><br>Manual edits are tagged <strong>EDITED</strong> so you keep an audit trail.</div>`,
     actions: [
       ...(isNew ? [] : [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox("Delete this entry permanently? Photos will be removed too, on this device and in the Google Sheet.", async () => { PhotoDB.del(r.inPhoto); PhotoDB.del(r.outPhoto); RECORDS = RECORDS.filter(x => x.id !== r.id); Sync.saveOutbox(Sync.outbox().filter(x => x !== r.id)); persistRec(); renderTab(CUR_TAB); toast("Entry deleted"); if (Sync.on) { try { await Sync.call({ action: "delete", id: r.id }); } catch (e) { toast("Deleted here, but couldn't remove it from the Sheet: " + e.message, 5000); } } }); } }]),
       { label: "Cancel" },
@@ -1620,12 +1654,13 @@ function editRecord(id) {
           const inAt = new Date(inV).getTime();
           const outAt = outV ? new Date(outV).getTime() : null;
           if (outAt && outAt <= inAt) { toast("Time out must be after time in"); return; }
+          const restOverride = $("#eRest", el).value || null;
           let saved;
           if (isNew) {
-            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", edited: true, createdAt: Date.now() };
+            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", restOverride, edited: true, createdAt: Date.now() };
             RECORDS.push(saved);
           } else {
-            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, edited: true });
+            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, edited: true });
             saved = r;
           }
           persistRec(); Sync.queue(saved.id); Sync.flush(true);
@@ -1782,12 +1817,11 @@ function renderPeople() {
         <button class="btn sm primary" id="addEmp">+ Add employee</button>
       </div>
       ${EMPLOYEES.length ? `<div class="tbl-scroll"><table>
-        <thead><tr><th>Name</th><th>Position</th><th>Schedule</th><th>Rest days</th><th class="num">Hourly rate</th><th class="num">Daily (8h)</th><th>PIN</th><th>Status</th><th></th></tr></thead>
+        <thead><tr><th>Name</th><th>Position</th><th>Weekly schedule</th><th class="num">Hourly rate</th><th class="num">Daily (8h)</th><th>PIN</th><th>Status</th><th></th></tr></thead>
         <tbody>${EMPLOYEES.map(e => `<tr>
           <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">${esc(initials(e.name))}</span><strong>${esc(e.name)}</strong></div></td>
           <td>${esc(e.role || "Staff")}</td>
-          <td>${e.shiftStart ? esc(e.shiftStart) + (e.shiftEnd ? "–" + esc(e.shiftEnd) : "") : `<span class="muted">${esc(SETTINGS.shiftStart)} (default)</span>`}</td>
-          <td>${(e.restDays || []).length ? (e.restDays || []).map(d => DAY_NAMES[d]).join(", ") : `<span class="muted">none</span>`}</td>
+          <td>${scheduleStrip(e)}</td>
           <td class="num">${money(e.rate)}</td>
           <td class="num">${money(e.rate * SETTINGS.standardHours)}</td>
           <td>${e.pin ? "••••" : `<span class="muted">none</span>`}</td>
@@ -1798,6 +1832,13 @@ function renderPeople() {
       <div class="note" style="margin-top:12px">Deactivating hides someone from the kiosk but keeps their history and payroll records.</div>
     </div>`;
   $("#addEmp").onclick = () => editEmp(null);
+  function scheduleStrip(e) {
+    const sched = weekScheduleFor(e);
+    return `<div class="row" style="gap:3px">${DAY_NAMES.map((d, i) => {
+      const on = !!sched[i];
+      return `<span class="tiny" title="${d}: ${on ? esc(sched[i]) : "day off"}" style="width:26px;text-align:center;padding:3px 0;border-radius:5px;font-weight:600;${on ? "background:var(--accent-soft);color:var(--accent-dark)" : "background:#f3f4f6;color:#9ca3af"}">${d[0]}</span>`;
+    }).join("")}</div>`;
+  }
   $$("#t-people [data-ed]").forEach(b => b.onclick = () => editEmp(b.dataset.ed));
 }
 function editEmp(id) {
@@ -1816,19 +1857,10 @@ function editEmp(id) {
           <option value="1" ${e?.active !== false ? "selected" : ""}>Active</option>
           <option value="0" ${e?.active === false ? "selected" : ""}>Inactive</option></select></div>
       </div>
-      <h3 class="sec-title" style="margin-top:18px">Schedule</h3>
-      <div class="grid2">
-        <div class="field"><label class="f">Shift starts</label><input type="time" id="fStart" value="${esc(e?.shiftStart || SETTINGS.shiftStart)}"></div>
-        <div class="field"><label class="f">Shift ends <span class="muted" style="font-weight:400">(for reference)</span></label><input type="time" id="fEnd" value="${esc(e?.shiftEnd || "")}"></div>
-      </div>
-      <div class="field">
-        <label class="f">Rest days</label>
-        <div class="row wrap-r" id="fRest">
-          ${DAY_NAMES.map((d, i) => `<label style="display:flex;gap:5px;align-items:center;padding:7px 10px;border:1px solid var(--line);border-radius:8px;cursor:pointer;font-size:14px">
-            <input type="checkbox" data-day="${i}" ${(e?.restDays || []).includes(i) ? "checked" : ""} style="width:16px;height:16px"> ${d}</label>`).join("")}
-        </div>
-      </div>
-      <div class="note">Late is measured against this person's own start time, so a closing shift is no longer flagged at 8 AM. Work on a rest day earns the 130% premium automatically.<br><br>Daily equivalent at ${SETTINGS.standardHours}h: <span id="fDaily">—</span></div>`,
+      <h3 class="sec-title" style="margin-top:18px">Weekly schedule</h3>
+      <p class="small muted" style="margin-top:0">Set what time they start on each day they work. Leave a day blank to mark it as their day off — if they get called in on that day, it automatically pays the 130% rest-day rate.</p>
+      <div id="fSched"></div>
+      <div class="note" style="margin-top:12px">Daily equivalent at ${SETTINGS.standardHours}h: <span id="fDaily">—</span></div>`,
     actions: [
       ...(e ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, () => { EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id); persistEmp(); renderTab(CUR_TAB); toast("Employee deleted"); }); } }] : []),
       { label: "Cancel" },
@@ -1841,9 +1873,7 @@ function editEmp(id) {
             rate: Math.max(0, Number($("#fRate", el).value) || 0),
             pin: $("#fPin", el).value.replace(/\D/g, "").slice(0, 4),
             active: $("#fActive", el).value === "1",
-            shiftStart: $("#fStart", el).value || SETTINGS.shiftStart,
-            shiftEnd: $("#fEnd", el).value || "",
-            restDays: $$("#fRest input:checked", el).map(c => Number(c.dataset.day))
+            weekSchedule: readScheduleRows($("#fSched", el))
           };
           if (e) Object.assign(e, data); else EMPLOYEES.push(Object.assign({ id: uid() }, data));
           persistEmp(); Sync.pushEmployees(); close(); renderTab(CUR_TAB); toast("Saved");
@@ -1851,7 +1881,44 @@ function editEmp(id) {
       }]
   });
   const upd = () => { const el = $("#modalRoot .overlay:last-child"); const v = Number($("#fRate", el).value) || 0; $("#fDaily", el).textContent = money(v * SETTINGS.standardHours); };
-  setTimeout(() => { const el = $("#modalRoot .overlay:last-child"); $("#fRate", el).oninput = upd; upd(); }, 40);
+  setTimeout(() => {
+    const el = $("#modalRoot .overlay:last-child");
+    $("#fRate", el).oninput = upd; upd();
+    renderScheduleRows($("#fSched", el), weekScheduleFor(e));
+  }, 40);
+}
+
+/** Build (or migrate) a 7-slot weekly schedule for an employee being edited. */
+function weekScheduleFor(e) {
+  if (e && e.weekSchedule && e.weekSchedule.length === 7) return e.weekSchedule.slice();
+  if (e && e.shiftStart) {
+    const rd = e.restDays || [];
+    return [0, 1, 2, 3, 4, 5, 6].map(d => rd.includes(d) ? "" : e.shiftStart);
+  }
+  // brand new employee — assume every day at the shop's default start
+  return [0, 1, 2, 3, 4, 5, 6].map(() => SETTINGS.shiftStart);
+}
+function renderScheduleRows(container, sched) {
+  container.innerHTML = DAY_NAMES.map((d, i) => `
+    <div class="row" style="padding:8px 0;border-bottom:1px solid var(--line)" data-row="${i}">
+      <span style="width:44px;font-weight:600;font-size:14px">${d}</span>
+      <label class="row" style="gap:6px;cursor:pointer">
+        <input type="checkbox" data-off="${i}" ${sched[i] ? "" : "checked"} style="width:16px;height:16px">
+        <span class="small muted">Day off</span>
+      </label>
+      <input type="time" data-start="${i}" value="${esc(sched[i] || SETTINGS.shiftStart)}" style="max-width:130px" ${sched[i] ? "" : "disabled"}>
+    </div>`).join("");
+  DAY_NAMES.forEach((_, i) => {
+    const off = container.querySelector(`[data-off="${i}"]`);
+    const time = container.querySelector(`[data-start="${i}"]`);
+    off.onchange = () => { time.disabled = off.checked; };
+  });
+}
+function readScheduleRows(container) {
+  return [0, 1, 2, 3, 4, 5, 6].map(i => {
+    const off = container.querySelector(`[data-off="${i}"]`).checked;
+    return off ? "" : container.querySelector(`[data-start="${i}"]`).value || SETTINGS.shiftStart;
+  });
 }
 
 /* ---------------- SETTINGS ---------------- */
