@@ -708,6 +708,7 @@ const Sync = {
       inGeo: rec.inGeo, outGeo: rec.outGeo,
       inNote: rec.inNote, outNote: rec.outNote,
       restOverride: rec.restOverride || "",
+      otApproved: !!rec.otApproved,
       edited: !!rec.edited,
       employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), weekSchedule: e.weekSchedule || null, shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
       inPhotoId: rec.inPhotoDriveId || "", outPhotoId: rec.outPhotoDriveId || ""
@@ -831,7 +832,7 @@ const Sync = {
           inPhoto: null, outPhoto: null, inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: "",
           inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: "",
           inGeo: null, outGeo: null, inNote: r.inNote || "", outNote: "",
-          restOverride: r.restOverride || null,
+          restOverride: r.restOverride || null, otApproved: !!r.otApproved,
           edited: false, remote: true, device: r.device || "", createdAt: r.inAt
         });
         opened++;
@@ -867,7 +868,7 @@ const Sync = {
         inPhoto: null, outPhoto: null,
         inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: r.outPhotoUrl || "",
         inNote: r.inNote || "", outNote: "",
-        restOverride: r.restOverride || null,
+        restOverride: r.restOverride || null, otApproved: !!r.otApproved,
         edited: r.edited, remote: true, device: r.device || "", createdAt: r.inAt
       };
       if (!local) {
@@ -969,13 +970,32 @@ function computeShift(rec, emp, st) {
   if (!rec.inAt) { out.flags.push("no-in"); return out; }
   if (!rec.outAt) { out.flags.push("open"); return out; }
 
-  let ms = rec.outAt - rec.inAt;
-  if (ms < 0) { out.flags.push("invalid"); return out; }
+  // scheduled start for this day — drives both the early-clock-in clamp and the late check
+  const startStr = (emp && emp.weekSchedule && emp.weekSchedule.length) ? scheduleFor(emp, rec.date).start : ((emp && emp.shiftStart) || st.shiftStart);
+  let schedStartMs = null;
+  if (startStr) {
+    const [ssh, ssm] = startStr.split(":").map(Number);
+    const d0 = new Date(rec.inAt);
+    let s0 = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), ssh, ssm, 0, 0);
+    if (rec.inAt - s0.getTime() < -12 * 3600000) s0 = new Date(s0.getTime() - 86400000);
+    schedStartMs = s0.getTime();
+  }
 
-  let worked = ms / 3600000;
-  if (worked > (st.maxShiftHours || 16)) out.flags.push("too-long");
+  const std = st.standardHours || 8;
+  const step = Math.max(1, st.roundToMinutes || 1) / 60;
+
+  // Overtime is opt-in. Unless this shift's OT is approved, paid time starts at the
+  // scheduled start (clocking in early earns nothing) and nothing past the standard
+  // day is paid. Approving the shift pays the full actual span, overtime included.
+  let effIn = rec.inAt;
+  if (!rec.otApproved && schedStartMs != null && schedStartMs > rec.inAt && schedStartMs < rec.outAt) effIn = schedStartMs;
+
+  let ms = rec.outAt - effIn;
+  if (ms < 0) { out.flags.push("invalid"); return out; }
+  if ((rec.outAt - rec.inAt) / 3600000 > (st.maxShiftHours || 16)) out.flags.push("too-long");
 
   // unpaid break
+  let worked = ms / 3600000;
   let br = 0;
   if (st.breakMinutes > 0 && worked >= (st.breakAfterHours || 5)) {
     br = st.breakMinutes / 60;
@@ -983,13 +1003,9 @@ function computeShift(rec, emp, st) {
   }
   out.breakDeducted = br;
 
-  // rounding
-  const step = Math.max(1, st.roundToMinutes || 1) / 60;
   const paid = Math.round(worked / step) * step;
-
-  const std = st.standardHours || 8;
   const regular = Math.min(paid, std);
-  const ot = Math.max(0, paid - std);
+  const ot = rec.otApproved ? Math.max(0, paid - std) : 0;
   const rate = Number(emp?.rate || 0);
 
   // day type → premium multipliers.
@@ -1003,8 +1019,8 @@ function computeShift(rec, emp, st) {
   const rest = rec.restOverride === "rest" ? true : rec.restOverride === "ordinary" ? false : auto;
   const mult = dayRates(hol, rest, st);
 
-  out.worked = ms / 3600000;
-  out.paid = paid;
+  out.worked = (rec.outAt - rec.inAt) / 3600000;   // full actual span, for reference
+  out.paid = regular + ot;                          // hours actually paid
   out.regular = regular;
   out.ot = ot;
   out.dayType = dayLabel(hol, rest);
@@ -1014,17 +1030,22 @@ function computeShift(rec, emp, st) {
   out.gross = regular * rate * mult.reg + ot * rate * mult.ot;
   out.premium = out.gross - out.base;
 
-  // lateness — measured against this employee's schedule for THIS day of the week (best-effort, not critical)
-  const start = (emp && emp.weekSchedule && emp.weekSchedule.length) ? scheduleFor(emp, rec.date).start : ((emp && emp.shiftStart) || st.shiftStart);
-  if (start && !rest && !hol) {
-    const [sh, sm] = start.split(":").map(Number);
-    const d = new Date(rec.inAt);
-    let sched = new Date(d.getFullYear(), d.getMonth(), d.getDate(), sh, sm, 0, 0);
-    // a shift starting late in the evening may be clocked in just after midnight
-    if (rec.inAt - sched.getTime() < -12 * 3600000) sched = new Date(sched.getTime() - 86400000);
-    const lateMs = rec.inAt - sched.getTime() - (st.gracePeriodMin || 0) * 60000;
+  // lateness — measured against this employee's scheduled start for this day
+  if (startStr && !rest && !hol && schedStartMs != null) {
+    const lateMs = rec.inAt - schedStartMs - (st.gracePeriodMin || 0) * 60000;
     if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
   }
+
+  // unapproved overtime worth a look: worked meaningfully past the scheduled end
+  // (or past the standard day when there's no schedule). Flag it so you can approve
+  // it if the extra time was mandated — otherwise it stays unpaid, which is the point.
+  if (!rec.otApproved) {
+    let pendingHrs;
+    if (schedStartMs != null) pendingHrs = (rec.outAt - (schedStartMs + std * 3600000)) / 3600000;
+    else { const rawPaid = Math.round(((rec.outAt - rec.inAt) / 3600000 - br) / step) * step; pendingHrs = rawPaid - std; }
+    if (pendingHrs >= 5 / 60) out.flags.push("ot-pending");
+  }
+
   if (ot > 0) out.flags.push("ot");
   if (hol) out.flags.push("holiday");
   if (rest) out.flags.push("restday");
@@ -1634,7 +1655,8 @@ function drawRecordTable() {
     const flags = [];
     if (c.flags.includes("open")) flags.push(`<span class="pill warnp">NO TIME OUT</span>`);
     if (c.flags.includes("late")) flags.push(`<span class="pill warnp">${c.lateMin}m LATE</span>`);
-    if (c.flags.includes("ot")) flags.push(`<span class="pill in">OT</span>`);
+    if (c.flags.includes("ot")) flags.push(`<span class="pill in" title="Approved overtime — paid">OT ✓</span>`);
+    if (c.flags.includes("ot-pending")) flags.push(`<span class="pill warnp" title="Worked past the scheduled shift, but overtime isn't approved so it isn't paid. Open Edit and tick 'Approve overtime' if this was mandated.">OT?</span>`);
     if (c.flags.includes("holiday")) flags.push(`<span class="pill dangerp" title="${esc(c.holidayName)} · ${esc(c.dayType)}">${Math.round(c.mult * 100)}%</span>`);
     else if (c.flags.includes("restday")) flags.push(`<span class="pill warnp" title="Worked on their scheduled day off — paid at the plain rate under your policy">REST DAY</span>`);
     if (c.flags.includes("unscheduled")) flags.push(`<span class="pill warnp" title="Worked on a day their schedule says off — a cover shift or a swap. Open Edit to record which it was.">COVER?</span>`);
@@ -1703,7 +1725,14 @@ function editRecord(id) {
         </select>
       </div>
       <div class="note">Leave on <strong>Auto</strong> most of the time. Use this to record what actually happened when someone worked a day their schedule says off — a <em>cover shift</em> (Rest day) or a <em>swap agreed in advance</em> (Ordinary day). Your policy pays rest days at the plain rate, so this doesn't change the pay; it clears the COVER? flag and keeps the record straight. Holidays always follow the calendar.
-      <br><br>Manual edits are tagged <strong>EDITED</strong> so you keep an audit trail.</div>`,
+      <br><br>Manual edits are tagged <strong>EDITED</strong> so you keep an audit trail.</div>
+      <div class="field" style="margin-top:14px">
+        <label class="f" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="eOt" ${r?.otApproved ? "checked" : ""} style="width:auto">
+          Approve overtime for this shift
+        </label>
+      </div>
+      <div class="note">Off by default. When off, an early clock-in isn't paid and hours past the standard day aren't paid — pay is capped at the scheduled shift. Tick this <strong>only</strong> when you genuinely asked this person to come in early or stay late, and their full actual time (overtime included) will be paid.</div>`,
     actions: [
       ...(isNew ? [] : [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox("Delete this entry permanently? Photos will be removed too, on this device and in the Google Sheet.", async () => { PhotoDB.del(r.inPhoto); PhotoDB.del(r.outPhoto); RECORDS = RECORDS.filter(x => x.id !== r.id); Sync.saveOutbox(Sync.outbox().filter(x => x !== r.id)); persistRec(); renderTab(CUR_TAB); toast("Entry deleted"); if (Sync.on) { try { await Sync.call({ action: "delete", id: r.id }); } catch (e) { toast("Deleted here, but couldn't remove it from the Sheet: " + e.message, 5000); } } }); } }]),
       { label: "Cancel" },
@@ -1716,12 +1745,13 @@ function editRecord(id) {
           const outAt = outV ? new Date(outV).getTime() : null;
           if (outAt && outAt <= inAt) { toast("Time out must be after time in"); return; }
           const restOverride = $("#eRest", el).value || null;
+          const otApproved = $("#eOt", el).checked;
           let saved;
           if (isNew) {
-            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", restOverride, edited: true, createdAt: Date.now() };
+            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", restOverride, otApproved, edited: true, createdAt: Date.now() };
             RECORDS.push(saved);
           } else {
-            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, edited: true });
+            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, otApproved, edited: true });
             saved = r;
           }
           persistRec(); Sync.queue(saved.id); Sync.flush(true);
