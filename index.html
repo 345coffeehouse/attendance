@@ -984,15 +984,14 @@ function computeShift(rec, emp, st) {
   const std = st.standardHours || 8;
   const step = Math.max(1, st.roundToMinutes || 1) / 60;
 
-  // Overtime is opt-in. Unless this shift's OT is approved, paid time starts at the
-  // scheduled start (clocking in early earns nothing) and nothing past the standard
-  // day is paid. Approving the shift pays the full actual span, overtime included.
-  let effIn = rec.inAt;
-  if (!rec.otApproved && schedStartMs != null && schedStartMs > rec.inAt && schedStartMs < rec.outAt) effIn = schedStartMs;
-
-  let ms = rec.outAt - effIn;
+  // Pay is based on the actual time worked, capped at the standard day: regular
+  // tops out at `std`, and hours past it are OVERTIME — paid only when this shift's
+  // OT is approved. That cap is what stops an early clock-in from padding pay, so we
+  // never second-guess the clock by trimming to a schedule (a rotating roster means
+  // the "scheduled" start often isn't the shift they actually worked).
+  let ms = rec.outAt - rec.inAt;
   if (ms < 0) { out.flags.push("invalid"); return out; }
-  if ((rec.outAt - rec.inAt) / 3600000 > (st.maxShiftHours || 16)) out.flags.push("too-long");
+  if (ms / 3600000 > (st.maxShiftHours || 16)) out.flags.push("too-long");
 
   // unpaid break
   let worked = ms / 3600000;
@@ -1036,15 +1035,9 @@ function computeShift(rec, emp, st) {
     if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
   }
 
-  // unapproved overtime worth a look: worked meaningfully past the scheduled end
-  // (or past the standard day when there's no schedule). Flag it so you can approve
-  // it if the extra time was mandated — otherwise it stays unpaid, which is the point.
-  if (!rec.otApproved) {
-    let pendingHrs;
-    if (schedStartMs != null) pendingHrs = (rec.outAt - (schedStartMs + std * 3600000)) / 3600000;
-    else { const rawPaid = Math.round(((rec.outAt - rec.inAt) / 3600000 - br) / step) * step; pendingHrs = rawPaid - std; }
-    if (pendingHrs >= 5 / 60) out.flags.push("ot-pending");
-  }
+  // worked past the standard day but OT isn't approved — the extra stays unpaid.
+  // Flag it so you can approve it in Records → Edit if the overtime was mandated.
+  if (!rec.otApproved && paid > std) out.flags.push("ot-pending");
 
   if (ot > 0) out.flags.push("ot");
   if (hol) out.flags.push("holiday");
