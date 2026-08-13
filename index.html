@@ -1018,8 +1018,8 @@ function computeShift(rec, emp, st) {
   const rest = rec.restOverride === "rest" ? true : rec.restOverride === "ordinary" ? false : auto;
   const mult = dayRates(hol, rest, st);
 
-  out.worked = (rec.outAt - rec.inAt) / 3600000;   // full actual span, for reference
-  out.paid = regular + ot;                          // hours actually paid
+  out.worked = paid;                                // actual hours on shift (rounded, break-adjusted)
+  out.paid = regular + ot;                          // hours actually paid (regular + approved OT)
   out.regular = regular;
   out.ot = ot;
   out.dayType = dayLabel(hol, rest);
@@ -1361,7 +1361,7 @@ async function submitEntry() {
     summaryHtml =
       `<div class="kv"><span class="k">Timed in</span><span class="v">${fmtTime(rec.inAt)}</span></div>
        <div class="kv"><span class="k">Timed out</span><span class="v">${fmtTime(now)}</span></div>
-       <div class="kv"><span class="k">Hours worked</span><span class="v">${hm(c.paid)}${c.breakDeducted ? ` <span class="tiny muted">(−${Math.round(c.breakDeducted * 60)}m break)</span>` : ""}</span></div>
+       <div class="kv"><span class="k">Hours worked</span><span class="v">${hm(c.worked)}${c.breakDeducted ? ` <span class="tiny muted">(−${Math.round(c.breakDeducted * 60)}m break)</span>` : ""}</span></div>
        ${c.ot > 0 ? `<div class="kv"><span class="k">Overtime</span><span class="v">${hm(c.ot)}</span></div>` : ""}
        ${isAdminDevice() && Number(K.emp?.rate || 0) > 0
         ? `<div class="kv"><span class="k">Est. pay this shift</span><span class="v">${money(c.gross)}</span></div>`
@@ -1644,7 +1644,7 @@ function drawRecordTable() {
   let tH = 0, tOt = 0, tP = 0, tPrem = 0;
   const rows = list.map(r => {
     const e = empById(r.empId); const c = computeShift(r, e, SETTINGS);
-    tH += c.paid; tOt += c.ot; tP += c.gross; tPrem += c.premium;
+    tH += c.worked; tOt += c.ot; tP += c.gross; tPrem += c.premium;
     const flags = [];
     if (c.flags.includes("open")) flags.push(`<span class="pill warnp">NO TIME OUT</span>`);
     if (c.flags.includes("late")) flags.push(`<span class="pill warnp">${c.lateMin}m LATE</span>`);
@@ -1668,7 +1668,7 @@ function drawRecordTable() {
       <td>${fmtTime(r.inAt)} ${geo(r.inGeo)}</td>
       <td>${ph(r.outPhoto, r.outPhotoUrl, (e?.name || "") + " — time out")}</td>
       <td>${r.outAt ? fmtTime(r.outAt) + " " + geo(r.outGeo) : `<span class="pill warnp">OPEN</span>`}</td>
-      <td class="num">${c.paid ? c.paid.toFixed(2) : "—"}</td>
+      <td class="num">${c.worked ? c.worked.toFixed(2) : "—"}</td>
       <td class="num">${c.ot ? c.ot.toFixed(2) : "—"}</td>
       <td class="num">${c.premium ? money(c.premium) : "—"}</td>
       <td class="num">${c.gross ? money(c.gross) : "—"}</td>
@@ -2126,7 +2126,7 @@ function renderSettings() {
       ${chk("sSyncPhotos", "Upload selfies to Drive", s.syncPhotos, "Turn off to sync only times and locations. Uses far less data on mobile.")}
       <div class="row wrap-r" style="margin-top:14px">
         <button class="btn sm primary" id="syncTest">Test connection</button>
-        <button class="btn sm" id="syncPushAll">⬆ Upload all local records</button>
+        <button class="btn sm" id="syncPushAll">⬆ Re-upload &amp; recompute all</button>
         <button class="btn sm" id="syncPullNow">⬇ Pull from Sheet</button>
         <button class="btn sm" id="syncOpen">Open the Sheet</button>
       </div>
@@ -2266,12 +2266,12 @@ function renderSettings() {
   };
   $("#syncPushAll").onclick = async () => {
     if (needSaved()) return;
-    confirmBox(`Upload all <strong>${RECORDS.filter(r => !r.remote).length}</strong> records from this device to the Sheet? Existing rows with the same ID get updated, not duplicated.`, async () => {
-      Sync.saveOutbox(RECORDS.filter(r => !r.remote).map(r => r.id));
-      msg("wait", "Uploading… photos make this slow, please leave this page open.");
+    confirmBox(`Re-send all <strong>${RECORDS.length}</strong> records to the Sheet and recompute their pay? Rows are matched by ID and updated in place — nothing is duplicated. Use this after a pay-rule change to refresh every row.`, async () => {
+      Sync.saveOutbox(RECORDS.map(r => r.id));
+      msg("wait", "Uploading & recomputing… photos make this slow, please leave this page open.");
       const res = await Sync.flush(false);
-      msg(Sync.status === "error" ? "err" : "ok", Sync.status === "error" ? "Stopped: " + esc(Sync.lastError) + " — the rest stay queued and will retry." : `Uploaded ${res.sent} record(s).`);
-    }, "Upload");
+      msg(Sync.status === "error" ? "err" : "ok", Sync.status === "error" ? "Stopped: " + esc(Sync.lastError) + " — the rest stay queued and will retry." : `Re-sent and recomputed ${res.sent} record(s).`);
+    }, "Recompute all");
   };
   $("#syncPullNow").onclick = async () => {
     if (needSaved()) return;
