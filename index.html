@@ -459,9 +459,14 @@ const DEFAULT_SETTINGS = {
   breakMinutes: 0,
   breakAfterHours: 5,
   roundToMinutes: 1,
-  gracePeriodMin: 5,
+  gracePeriodMin: 0,           // free minutes before lateness is charged. 0 = none.
   shiftStart: "08:00",
+  shiftEnd: "17:00",
   maxShiftHours: 16,
+  otMinMinutes: 15,            // ignore overruns shorter than this — tidying up isn't overtime
+  autoCloseHours: 2,           // close a forgotten shift this long after its scheduled end
+  detectSwaps: true,           // snap a clock-in to the nearest shift in the roster
+  deductUndertime: true,       // charge minutes left early, same as minutes arrived late
   requirePin: false,
   requirePhoto: true,
   requireLocation: true,
@@ -709,7 +714,11 @@ const Sync = {
       inNote: rec.inNote, outNote: rec.outNote,
       restOverride: rec.restOverride || "",
       otApproved: !!rec.otApproved,
+      otBlock: !!rec.otBlock,
+      shiftOverride: rec.shiftOverride || "",
+      autoClosed: !!rec.autoClosed,
       edited: !!rec.edited,
+      roster: EMPLOYEES.map(x => ({ weekSchedule: x.weekSchedule || [] })),   // lets the backend match swaps too
       employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), weekSchedule: e.weekSchedule || null, shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
       inPhotoId: rec.inPhotoDriveId || "", outPhotoId: rec.outPhotoDriveId || ""
     };
@@ -833,6 +842,7 @@ const Sync = {
           inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: "",
           inGeo: null, outGeo: null, inNote: r.inNote || "", outNote: "",
           restOverride: r.restOverride || null, otApproved: !!r.otApproved,
+          otBlock: !!r.otBlock, shiftOverride: r.shiftOverride || null, autoClosed: !!r.autoClosed,
           edited: false, remote: true, device: r.device || "", createdAt: r.inAt
         });
         opened++;
@@ -869,6 +879,7 @@ const Sync = {
         inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: r.outPhotoUrl || "",
         inNote: r.inNote || "", outNote: "",
         restOverride: r.restOverride || null, otApproved: !!r.otApproved,
+        otBlock: !!r.otBlock, shiftOverride: r.shiftOverride || null, autoClosed: !!r.autoClosed,
         edited: r.edited, remote: true, device: r.device || "", createdAt: r.inAt
       };
       if (!local) {
@@ -913,17 +924,50 @@ function holidayOn(dateKey, st) {
   const h = (st.holidays || []).find(x => x.date === dateKey);
   return h && h.type !== "working" ? h : null;
 }
-/**
- * An employee's schedule for a given date. weekSchedule[0..6] = Sun..Sat,
- * each slot is "" (day off) or "HH:MM" (their start time that day) —
- * this is what lets someone open Mondays and close Wednesdays instead of
- * having one fixed shift start for every day.
+/* ---------------- weekly schedule ----------------
+ * weekSchedule[0..6] = Sun..Sat. Each slot is either "" (day off) or a shift
+ * written as "HH:MM-HH:MM" — a start AND an end. The end is what makes pay
+ * work: it tells us the shift is 8 hours for a cook, 7 for Allen, 5 for a
+ * part-timer, so nobody is paid by whatever the clock happened to catch.
+ *
+ * Slots saved by older versions held only a start ("07:30"). Those are read as
+ * start + the shop's standard day so nothing breaks, but they're flagged in the
+ * Employees tab until a real end time is entered.
  */
-function scheduleFor(emp, dateKey) {
+const SLOT_RE = /^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/;
+const hhmmToMin = s => { const p = String(s || "").split(":"); return (Number(p[0]) || 0) * 60 + (Number(p[1]) || 0); };
+const minToHhmm = m => { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
+
+/** "07:30-15:30" → {start,end,startMin,endMin,hours,legacy}. "" → null. */
+function parseSlot(slot, st) {
+  const s = String(slot || "").trim();
+  if (!s) return null;
+  const m = SLOT_RE.exec(s);
+  let start, end, legacy = false;
+  if (m) { start = m[1]; end = m[2]; }
+  else if (/^\d{1,2}:\d{2}$/.test(s)) {          // legacy start-only slot
+    start = s; legacy = true;
+    end = minToHhmm(hhmmToMin(s) + Math.round(((st && st.standardHours) || 8) * 60));
+  } else return null;
+  const startMin = hhmmToMin(start);
+  let endMin = hhmmToMin(end);
+  if (endMin <= startMin) endMin += 1440;        // shift runs past midnight
+  return { start, end, startMin, endMin, hours: (endMin - startMin) / 60, legacy };
+}
+const fmtSlot = slot => { const p = parseSlot(slot, SETTINGS); return p ? p.start + "–" + p.end : "day off"; };
+
+/**
+ * An employee's rostered shift for a given date.
+ * @returns {off, slot, start, end, hours, legacy}
+ */
+function scheduleFor(emp, dateKey, st) {
+  st = st || SETTINGS;
   const ws = emp && emp.weekSchedule;
-  if (!ws || !ws.length) return { off: false, start: (emp && emp.shiftStart) || "" }; // no schedule set — treat as every day the same
-  const slot = ws[parseKey(dateKey).getDay()] || "";
-  return { off: !slot, start: slot };
+  const raw = (ws && ws.length) ? (ws[parseKey(dateKey).getDay()] || "")
+    : (emp && emp.shiftStart ? emp.shiftStart : "");
+  const p = parseSlot(raw, st);
+  if (!p) return { off: true, slot: "", start: "", end: "", hours: 0, legacy: false };
+  return { off: false, slot: raw, start: p.start, end: p.end, hours: p.hours, legacy: p.legacy };
 }
 /** Is this date one of the employee's days off? */
 function isRestDay(dateKey, emp) {
@@ -931,6 +975,77 @@ function isRestDay(dateKey, emp) {
   const rd = emp && emp.restDays;               // legacy fallback for older employee records
   if (!rd || !rd.length) return false;
   return rd.indexOf(parseKey(dateKey).getDay()) !== -1;
+}
+
+/* ---------------- shift matching (swap detection) ----------------
+ * A rotating roster means people trade shifts constantly and nobody writes it
+ * down. If we judged Kristein's 1:48 PM Saturday clock-in against the 7:30 AM
+ * her roster says, the app would call her 374 minutes late — she wasn't late,
+ * she took the closing shift.
+ *
+ * So: gather every distinct shift the shop actually runs, and snap the clock-in
+ * to the nearest one. Her own rostered shift wins unless it is badly out (2h+)
+ * AND another shift is a clean fit (within 45 min) — which keeps a genuinely
+ * late opener from being quietly re-labelled as a late-shift worker.
+ */
+const SWAP_OWN_GAP_MIN = 120;   // own shift must be off by at least this much...
+const SWAP_MATCH_MIN = 45;      // ...and another must fit this closely, to call it a swap
+
+/** Every distinct shift in the roster, as parsed slots. */
+function rosterShifts(employees, st) {
+  const seen = {}, out = [];
+  (employees || []).forEach(e => {
+    (e.weekSchedule || []).forEach(slot => {
+      const p = parseSlot(slot, st);
+      if (p && !seen[p.startMin + "-" + p.endMin]) { seen[p.startMin + "-" + p.endMin] = 1; out.push(p); }
+    });
+  });
+  return out;
+}
+/** Absolute minutes between a clock-in and a shift start, ignoring which day it is. */
+function gapToStart(inAt, startMin) {
+  const d = new Date(inAt);
+  const mins = d.getHours() * 60 + d.getMinutes();
+  let diff = Math.abs(mins - startMin % 1440);
+  return Math.min(diff, 1440 - diff);           // 23:50 vs 00:10 is 20 min apart, not 1420
+}
+/**
+ * Which shift did this record actually work?
+ * @returns {off, start, end, hours, swapped, matched, legacy}
+ */
+function shiftForRecord(rec, emp, st, employees) {
+  st = st || SETTINGS;
+  // a manual choice in Records → Edit always wins
+  if (rec.shiftOverride === "none") return { off: true, start: "", end: "", hours: 0, swapped: false, matched: false, legacy: false };
+  if (rec.shiftOverride) {
+    const p = parseSlot(rec.shiftOverride, st);
+    if (p) return { off: false, start: p.start, end: p.end, hours: p.hours, swapped: false, matched: true, legacy: false };
+  }
+  const own = scheduleFor(emp, rec.date, st);
+  // Someone with no roster at all isn't swapping anything — they have no shift to
+  // swap away from. Leave them on the pay-the-clock fallback rather than guessing
+  // them into a shift they were never assigned.
+  const rostered = ((emp && emp.weekSchedule) || []).some(s => !!parseSlot(s, st));
+  if (!st.detectSwaps || !rec.inAt || !rostered) return Object.assign({ swapped: false, matched: !own.off }, own);
+
+  const pool = rosterShifts(employees || EMPLOYEES, st);
+  if (!pool.length) return Object.assign({ swapped: false, matched: !own.off }, own);
+
+  let best = null, bestGap = Infinity;
+  pool.forEach(p => { const g = gapToStart(rec.inAt, p.startMin); if (g < bestGap) { bestGap = g; best = p; } });
+
+  const ownGap = own.off ? Infinity : gapToStart(rec.inAt, hhmmToMin(own.start));
+  const takeBest = best && bestGap <= SWAP_MATCH_MIN && ownGap >= SWAP_OWN_GAP_MIN;
+  if (!takeBest) return Object.assign({ swapped: false, matched: !own.off }, own);
+  return { off: false, start: best.start, end: best.end, hours: best.hours, swapped: true, matched: true, legacy: false };
+}
+/** The real clock time of a shift boundary, anchored to the day the person clocked in. */
+function anchorMs(inAt, minOfDay) {
+  const d = new Date(inAt);
+  let t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime() + minOfDay * 60000;
+  if (inAt - t < -12 * 3600000) t -= 86400000;   // clocked in just before midnight for a shift dated tomorrow
+  if (inAt - t > 12 * 3600000) t += 86400000;
+  return t;
 }
 /**
  * Premium multipliers against the plain hourly rate — 3:45 Coffee House policy.
@@ -962,36 +1077,45 @@ function dayLabel(holiday, rest) {
 }
 
 /**
- * Compute one shift. Pure function so it can be unit-tested.
- * @returns {worked, paid, regular, ot, gross, base, premium, lateMin, breakDeducted, flags[]}
+ * Compute one shift.
+ *
+ * PAY IS BASED ON THE ROSTERED SHIFT, NOT ON WHATEVER THE CLOCK CAUGHT.
+ * Someone rostered 7:30–15:30 is paid 8 hours. Clocking in six minutes early
+ * earns nothing extra; clocking out three minutes late earns nothing extra.
+ * What the clock is for is catching the exceptions:
+ *
+ *   late minutes       arrived after the shift start  → deducted per minute
+ *   undertime minutes  left before the shift end      → deducted per minute
+ *   overtime           stayed past the shift end      → paid only once approved
+ *
+ * This is how the shop already computes payroll by hand, and it's the only way
+ * a 7-hour shift and a 5-hour shift can sit in the same roster without the app
+ * guessing. If someone has no rostered shift at all we fall back to paying the
+ * clock, capped at the standard day — the old behaviour.
+ *
+ * @returns {worked, paid, regular, ot, gross, base, premium, lateMin, underMin, flags[]}
  */
-function computeShift(rec, emp, st) {
-  const out = { worked: 0, paid: 0, regular: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, breakDeducted: 0, dayType: "Ordinary day", mult: 1, flags: [] };
+function computeShift(rec, emp, st, employees) {
+  const out = {
+    worked: 0, paid: 0, scheduled: 0, regular: 0, ot: 0, gross: 0, base: 0, premium: 0,
+    lateMin: 0, underMin: 0, deduction: 0, breakDeducted: 0,
+    dayType: "Ordinary day", mult: 1, shift: "", flags: []
+  };
   if (!rec.inAt) { out.flags.push("no-in"); return out; }
   if (!rec.outAt) { out.flags.push("open"); return out; }
 
-  // scheduled start for this day — drives both the early-clock-in clamp and the late check
-  const startStr = (emp && emp.weekSchedule && emp.weekSchedule.length) ? scheduleFor(emp, rec.date).start : ((emp && emp.shiftStart) || st.shiftStart);
-  let schedStartMs = null;
-  if (startStr) {
-    const [ssh, ssm] = startStr.split(":").map(Number);
-    const d0 = new Date(rec.inAt);
-    let s0 = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate(), ssh, ssm, 0, 0);
-    if (rec.inAt - s0.getTime() < -12 * 3600000) s0 = new Date(s0.getTime() - 86400000);
-    schedStartMs = s0.getTime();
-  }
+  let ms = rec.outAt - rec.inAt;
+  if (ms < 0) { out.flags.push("invalid"); return out; }
 
   const std = st.standardHours || 8;
   const step = Math.max(1, st.roundToMinutes || 1) / 60;
+  const rate = Number((emp && emp.rate) || 0);
+  const grace = Math.max(0, st.gracePeriodMin || 0);
 
-  // Pay is based on the actual time worked, capped at the standard day: regular
-  // tops out at `std`, and hours past it are OVERTIME — paid only when this shift's
-  // OT is approved. That cap is what stops an early clock-in from padding pay, so we
-  // never second-guess the clock by trimming to a schedule (a rotating roster means
-  // the "scheduled" start often isn't the shift they actually worked).
-  let ms = rec.outAt - rec.inAt;
-  if (ms < 0) { out.flags.push("invalid"); return out; }
-  if (ms / 3600000 > (st.maxShiftHours || 16)) out.flags.push("too-long");
+  // A shift longer than the daily maximum is a forgotten clock-out, not a marathon.
+  // Refuse to pay it and shout, rather than quietly settling on the standard day.
+  const tooLong = ms / 3600000 > (st.maxShiftHours || 16);
+  if (tooLong) out.flags.push("too-long");
 
   // unpaid break
   let worked = ms / 3600000;
@@ -1001,11 +1125,7 @@ function computeShift(rec, emp, st) {
     worked = Math.max(0, worked - br);
   }
   out.breakDeducted = br;
-
-  const paid = Math.round(worked / step) * step;
-  const regular = Math.min(paid, std);
-  const ot = rec.otApproved ? Math.max(0, paid - std) : 0;
-  const rate = Number(emp?.rate || 0);
+  out.worked = Math.round(worked / step) * step;   // real time on the clock, for the record
 
   // day type → premium multipliers.
   // rec.restOverride lets you settle shift swaps and cover shifts by hand:
@@ -1018,10 +1138,63 @@ function computeShift(rec, emp, st) {
   const rest = rec.restOverride === "rest" ? true : rec.restOverride === "ordinary" ? false : auto;
   const mult = dayRates(hol, rest, st);
 
-  out.worked = paid;                                // actual hours on shift (rounded, break-adjusted)
-  out.paid = regular + ot;                          // hours actually paid (regular + approved OT)
+  const sched = shiftForRecord(rec, emp, st, employees);
+  out.shift = sched.off ? "" : sched.start + "–" + sched.end;
+
+  let regular = 0, ot = 0;
+
+  if (rec.otBlock) {
+    // A separate block clocked after the day's rostered shift already ended —
+    // someone clocked out, then came back in. All of it is overtime, and none of
+    // it is paid until you approve it.
+    ot = rec.otApproved ? out.worked : 0;
+    out.flags.push("ot-block");
+    if (!rec.otApproved) out.flags.push("ot-pending");
+
+  } else if (tooLong) {
+    // Nothing trustworthy to pay against. Left at zero and flagged so it gets fixed.
+    out.flags.push("needs-fix");
+
+  } else if (!sched.off && sched.hours > 0) {
+    const startMs = anchorMs(rec.inAt, hhmmToMin(sched.start));
+    const endMs = startMs + sched.hours * 3600000;
+    out.scheduled = sched.hours;
+
+    const lateMs = rec.inAt - startMs - grace * 60000;
+    if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
+
+    if (st.deductUndertime !== false) {
+      const underMs = endMs - rec.outAt - grace * 60000;
+      if (underMs > 0) { out.underMin = Math.round(underMs / 60000); out.flags.push("undertime"); }
+    }
+
+    regular = Math.max(0, sched.hours - (out.lateMin + out.underMin) / 60);
+    // Overtime only counts once the overrun is real. Wiping down and cashing up
+    // runs a few minutes past close most nights; treating that as pending overtime
+    // would put an OT? flag on nearly every row and bury the ones that matter.
+    const overMin = (rec.outAt - endMs) / 60000;
+    if (overMin >= (st.otMinMinutes ?? 15)) {
+      const overHrs = Math.round((overMin / 60) / step) * step;
+      if (rec.otApproved) ot = overHrs;
+      else out.flags.push("ot-pending");
+    }
+    if (sched.swapped) out.flags.push("swap");
+    if (sched.legacy) out.flags.push("no-end-time");
+
+  } else {
+    // No rostered shift for this day (or the roster is empty). Pay the clock,
+    // capped at the standard day, exactly as the app used to.
+    regular = Math.min(out.worked, std);
+    ot = rec.otApproved ? Math.max(0, out.worked - std) : 0;
+    if (!rec.otApproved && out.worked > std) out.flags.push("ot-pending");
+    out.scheduled = regular;
+    out.flags.push("no-schedule");
+  }
+
   out.regular = regular;
   out.ot = ot;
+  out.paid = regular + ot;
+  out.deduction = (out.lateMin + out.underMin) / 60 * rate * mult.reg;
   out.dayType = dayLabel(hol, rest);
   out.holidayName = hol ? hol.name : "";
   out.mult = mult.reg;
@@ -1029,22 +1202,13 @@ function computeShift(rec, emp, st) {
   out.gross = regular * rate * mult.reg + ot * rate * mult.ot;
   out.premium = out.gross - out.base;
 
-  // lateness — measured against this employee's scheduled start for this day
-  if (startStr && !rest && !hol && schedStartMs != null) {
-    const lateMs = rec.inAt - schedStartMs - (st.gracePeriodMin || 0) * 60000;
-    if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
-  }
-
-  // worked past the standard day but OT isn't approved — the extra stays unpaid.
-  // Flag it so you can approve it in Records → Edit if the overtime was mandated.
-  if (!rec.otApproved && paid > std) out.flags.push("ot-pending");
-
   if (ot > 0) out.flags.push("ot");
   if (hol) out.flags.push("holiday");
   if (rest) out.flags.push("restday");
   if (rec.restOverride) out.flags.push("override");
+  if (rec.autoClosed) out.flags.push("auto-closed");
   // worked a day the roster says they're off, and it hasn't been settled either way
-  if (auto && !rec.restOverride) out.flags.push("unscheduled");
+  if (auto && !rec.restOverride && !rec.otBlock) out.flags.push("unscheduled");
   return out;
 }
 
@@ -1114,9 +1278,59 @@ function showScreen(id) {
 const initials = n => n.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
 
 /** Latest open record (timed in, not yet out) for an employee. */
+/**
+ * The shift this person is currently inside.
+ *
+ * Crucially this ignores anything older than the daily maximum. Without that,
+ * a clock-in someone forgot to close stays "open" for ever, and the next time
+ * they tap Time In the app closes the stale shift instead — which is how one
+ * record came to span 25 August to 27 August and swallow a whole day's work.
+ * An abandoned shift is abandoned; the next tap starts something new.
+ */
 function openRecord(empId) {
-  return RECORDS.filter(r => r.empId === empId && r.inAt && !r.outAt)
+  const cutoff = Date.now() - (SETTINGS.maxShiftHours || 16) * 3600000;
+  return RECORDS.filter(r => r.empId === empId && r.inAt && !r.outAt && r.inAt >= cutoff)
     .sort((a, b) => b.inAt - a.inAt)[0] || null;
+}
+/** Open shifts old enough that they were plainly never clocked out. */
+function staleOpenRecords(now) {
+  now = now || Date.now();
+  const hardCutoff = now - (SETTINGS.maxShiftHours || 16) * 3600000;
+  return RECORDS.filter(r => {
+    if (!r.inAt || r.outAt) return false;
+    if (r.inAt < hardCutoff) return true;
+    const sched = shiftForRecord(r, empById(r.empId), SETTINGS, EMPLOYEES);
+    if (sched.off || !sched.hours) return false;
+    const endMs = anchorMs(r.inAt, hhmmToMin(sched.start)) + sched.hours * 3600000;
+    return now > endMs + Math.max(0, SETTINGS.autoCloseHours || 2) * 3600000;
+  });
+}
+/**
+ * Close forgotten shifts at their rostered end time and flag them.
+ *
+ * Left alone these are worth ₱0 (an open shift pays nothing) or, worse, get
+ * closed days later by an unrelated tap. Closing them at the scheduled end
+ * gets the money approximately right immediately and leaves a loud AUTO-CLOSED
+ * marker so the real time can be entered. Admin devices only — otherwise seven
+ * phones would each write their own version of the same correction.
+ */
+function autoCloseStale() {
+  if (!isTrulyAdminDevice()) return 0;
+  const list = staleOpenRecords();
+  if (!list.length) return 0;
+  list.forEach(r => {
+    const sched = shiftForRecord(r, empById(r.empId), SETTINGS, EMPLOYEES);
+    const endMs = (!sched.off && sched.hours)
+      ? anchorMs(r.inAt, hhmmToMin(sched.start)) + sched.hours * 3600000
+      : r.inAt + (SETTINGS.standardHours || 8) * 3600000;
+    r.outAt = Math.max(r.inAt, endMs);
+    r.autoClosed = true;
+    r.outNote = (r.outNote ? r.outNote + " · " : "") + "Auto-closed — no time out recorded";
+    Sync.queue(r.id);
+  });
+  persistRec();
+  Sync.flush(true);
+  return list.length;
 }
 
 function renderEmpList() {
@@ -1164,9 +1378,14 @@ function selectEmp(id) {
   const open = openRecord(e.id);
   const today = RECORDS.filter(r => r.empId === e.id && r.date === todayKey());
   const doneToday = today.filter(r => r.outAt).length;
-  $("#aStatus").innerHTML = open
+  // an abandoned shift no longer blocks Time In, but they should be told about it
+  const stale = !open && RECORDS.some(r => r.empId === e.id && r.inAt && !r.outAt);
+  const nextIsOt = !open && doneToday > 0;
+  $("#aStatus").innerHTML = (open
     ? `<div class="strip ok"><span class="dot blink"></span>Timed in at <strong>${fmtTime(open.inAt)}</strong> — ${hm((Date.now() - open.inAt) / 3600000)} elapsed</div>`
-    : `<div class="strip wait"><span class="dot"></span>Not timed in${doneToday ? ` · ${doneToday} completed shift${doneToday > 1 ? "s" : ""} today` : ""}</div>`;
+    : `<div class="strip wait"><span class="dot"></span>Not timed in${doneToday ? ` · ${doneToday} completed shift${doneToday > 1 ? "s" : ""} today` : ""}</div>`)
+    + (stale ? `<div class="strip warn" style="margin-top:8px"><span class="dot"></span>You have an earlier shift with no time out. Tell your manager so it can be fixed — you can still time in below.</div>` : "")
+    + (nextIsOt ? `<div class="strip warn" style="margin-top:8px"><span class="dot"></span>You already finished a shift today, so this will be logged as <strong>overtime</strong> and needs approval.</div>` : "");
   $("#btnIn").disabled = !!open;
   $("#btnOut").disabled = !open;
   $("#btnIn").classList.toggle("primary", !open);
@@ -1343,16 +1562,22 @@ async function submitEntry() {
 
   let rec, summaryHtml = "";
   if (K.action === "in") {
+    // Already completed a shift today? Then this is a second block — someone
+    // clocked out and came back. It's overtime, kept as its own record so the
+    // rostered shift stays clean, and it pays nothing until it's approved.
+    const otBlock = RECORDS.some(r => r.empId === K.emp.id && r.date === todayKey() && r.inAt && r.outAt);
     rec = {
       id: uid(), empId: K.emp.id, date: todayKey(),
       inAt: now, outAt: null,
       inPhoto: photoId, outPhoto: null,
       inGeo: K.geo, outGeo: null,
       inNote: note, outNote: "",
+      otBlock: otBlock, otApproved: false,
       edited: false, createdAt: now
     };
     RECORDS.push(rec);
-    summaryHtml = `<div class="kv"><span class="k">Timed in</span><span class="v">${fmtTime(now)}</span></div>`;
+    summaryHtml = `<div class="kv"><span class="k">Timed in</span><span class="v">${fmtTime(now)}</span></div>`
+      + (otBlock ? `<div class="kv"><span class="k">Logged as</span><span class="v">Overtime · needs approval</span></div>` : "");
   } else {
     rec = openRecord(K.emp.id);
     if (!rec) { toast("No open time-in found."); btn.disabled = false; btn.textContent = "Submit"; return; }
@@ -1534,6 +1759,13 @@ function renderDash() {
   inPer.forEach(r => { const c = computeShift(r, empById(r.empId), SETTINGS); perHrs += c.paid; perPay += c.gross; });
 
   const openOld = RECORDS.filter(r => r.inAt && !r.outAt && r.date < tk);
+  // shifts the clock says ran longer than a full day — always a missed time out
+  const broken = RECORDS.filter(r => r.inAt && r.outAt &&
+    (r.outAt - r.inAt) / 3600000 > (SETTINGS.maxShiftHours || 16));
+  // shifts closed automatically because nobody tapped out
+  const closedForThem = RECORDS.filter(r => r.autoClosed && r.date >= per.from && r.date <= per.to);
+  // anyone still missing an end time on their roster — pay can't be right until it's set
+  const noEnd = active.filter(e => (e.weekSchedule || []).some(s => { const p = parseSlot(s, SETTINGS); return p && p.legacy; }));
 
   $("#t-dash").innerHTML = `
     <div class="stat-grid">
@@ -1552,6 +1784,42 @@ function renderDash() {
           <div class="small" style="margin-top:6px">${openOld.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)}`).join(" · ")}</div>
         </div>
         <button class="btn sm" onclick="renderTabFromDash('records')">Fix</button>
+      </div>
+    </div>` : ""}
+
+    ${noEnd.length ? `<div class="card pad-sm" style="border-left:3px solid var(--warn)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">🕑</span>
+        <div class="grow">
+          <strong style="font-size:14px">${noEnd.length} ${noEnd.length > 1 ? "people have" : "person has"} no end time on their schedule</strong>
+          <div class="small muted">Pay is based on each person's rostered shift, so the app is assuming a ${SETTINGS.standardHours}-hour day until you set when they finish. Anyone on a 7 or 5 hour shift will be paid wrongly.</div>
+          <div class="small" style="margin-top:6px">${noEnd.slice(0, 8).map(e => esc(e.name)).join(" · ")}</div>
+        </div>
+        <button class="btn sm primary" onclick="renderTabFromDash('people')">Set them</button>
+      </div>
+    </div>` : ""}
+
+    ${broken.length ? `<div class="card pad-sm" style="border-left:3px solid var(--danger)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">🛑</span>
+        <div class="grow">
+          <strong style="font-size:14px">${broken.length} shift${broken.length > 1 ? "s run" : " runs"} longer than a full day</strong>
+          <div class="small muted">Someone timed in and didn't time out until days later, so the clock can't be trusted. ${broken.length > 1 ? "They pay" : "It pays"} ₱0 until the real times are entered.</div>
+          <div class="small" style="margin-top:6px">${broken.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)} (${((r.outAt - r.inAt) / 3600000).toFixed(0)} hrs)`).join(" · ")}</div>
+        </div>
+        <button class="btn sm" onclick="renderTabFromDash('records')">Fix</button>
+      </div>
+    </div>` : ""}
+
+    ${closedForThem.length ? `<div class="card pad-sm" style="border-left:3px solid var(--warn)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">✅</span>
+        <div class="grow">
+          <strong style="font-size:14px">${closedForThem.length} shift${closedForThem.length > 1 ? "s were" : " was"} closed automatically this period</strong>
+          <div class="small muted">Nobody tapped out, so ${closedForThem.length > 1 ? "they were" : "it was"} closed at the rostered end time and paid normally. Worth a glance before payday.</div>
+          <div class="small" style="margin-top:6px">${closedForThem.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)}`).join(" · ")}</div>
+        </div>
+        <button class="btn sm" onclick="renderTabFromDash('records')">Review</button>
       </div>
     </div>` : ""}
 
@@ -1641,15 +1909,22 @@ function filteredRecords() {
 function drawRecordTable() {
   const list = filteredRecords();
   if (!list.length) { $("#rTable").innerHTML = `<div class="card"><div class="empty">No records in this range.</div></div>`; return; }
-  let tH = 0, tOt = 0, tP = 0, tPrem = 0;
+  let tH = 0, tOt = 0, tP = 0, tPrem = 0, tReg = 0, tDed = 0;
   const rows = list.map(r => {
     const e = empById(r.empId); const c = computeShift(r, e, SETTINGS);
-    tH += c.worked; tOt += c.ot; tP += c.gross; tPrem += c.premium;
+    tH += c.worked; tOt += c.ot; tP += c.gross; tPrem += c.premium; tReg += c.regular; tDed += c.deduction;
     const flags = [];
     if (c.flags.includes("open")) flags.push(`<span class="pill warnp">NO TIME OUT</span>`);
-    if (c.flags.includes("late")) flags.push(`<span class="pill warnp">${c.lateMin}m LATE</span>`);
+    if (c.flags.includes("late")) flags.push(`<span class="pill warnp" title="Arrived ${c.lateMin} min after the ${esc(c.shift)} shift started — deducted per minute">${c.lateMin}m LATE</span>`);
+    if (c.flags.includes("undertime")) flags.push(`<span class="pill warnp" title="Left ${c.underMin} min before the ${esc(c.shift)} shift ended — deducted per minute">${c.underMin}m EARLY</span>`);
+    if (c.flags.includes("ot-block")) flags.push(`<span class="pill out" title="A second block clocked after their shift had already finished. Counted entirely as overtime.">OT BLOCK</span>`);
     if (c.flags.includes("ot")) flags.push(`<span class="pill in" title="Approved overtime — paid">OT ✓</span>`);
-    if (c.flags.includes("ot-pending")) flags.push(`<span class="pill warnp" title="Worked past the scheduled shift, but overtime isn't approved so it isn't paid. Open Edit and tick 'Approve overtime' if this was mandated.">OT?</span>`);
+    if (c.flags.includes("ot-pending")) flags.push(`<span class="pill warnp" title="Stayed past the end of the scheduled shift, but overtime isn't approved so it isn't paid. Open Edit and tick 'Approve overtime' if you asked them to stay.">OT?</span>`);
+    if (c.flags.includes("swap")) flags.push(`<span class="pill out" title="Clocked in for the ${esc(c.shift)} shift, not the one their roster shows. Pay and lateness follow the shift they actually worked.">SWAP → ${esc(c.shift)}</span>`);
+    if (c.flags.includes("auto-closed")) flags.push(`<span class="pill dangerp" title="They never clocked out. The shift was closed at its scheduled end time — check it and enter the real time.">AUTO-CLOSED</span>`);
+    if (c.flags.includes("needs-fix")) flags.push(`<span class="pill dangerp" title="This shift runs longer than the daily maximum, so somebody forgot to clock out. It pays nothing until the times are corrected.">FIX TIMES · UNPAID</span>`);
+    if (c.flags.includes("no-schedule")) flags.push(`<span class="pill out" title="No shift set for this person on this day, so pay falls back to the clock. Set their weekly schedule in the Employees tab.">NO SHIFT SET</span>`);
+    if (c.flags.includes("no-end-time")) flags.push(`<span class="pill warnp" title="Their roster has a start time but no end time for this day, so the standard day was assumed. Set the end time in Employees.">NO END TIME</span>`);
     if (c.flags.includes("holiday")) flags.push(`<span class="pill dangerp" title="${esc(c.holidayName)} · ${esc(c.dayType)}">${Math.round(c.mult * 100)}%</span>`);
     else if (c.flags.includes("restday")) flags.push(`<span class="pill warnp" title="Worked on their scheduled day off — paid at the plain rate under your policy">REST DAY</span>`);
     if (c.flags.includes("unscheduled")) flags.push(`<span class="pill warnp" title="Worked on a day their schedule says off — a cover shift or a swap. Open Edit to record which it was.">COVER?</span>`);
@@ -1668,8 +1943,11 @@ function drawRecordTable() {
       <td>${fmtTime(r.inAt)} ${geo(r.inGeo)}</td>
       <td>${ph(r.outPhoto, r.outPhotoUrl, (e?.name || "") + " — time out")}</td>
       <td>${r.outAt ? fmtTime(r.outAt) + " " + geo(r.outGeo) : `<span class="pill warnp">OPEN</span>`}</td>
-      <td class="num">${c.worked ? c.worked.toFixed(2) : "—"}</td>
+      <td>${c.shift ? `<span class="tiny">${esc(c.shift)}</span>` : `<span class="muted tiny">—</span>`}</td>
+      <td class="num" title="Actual time between clocking in and out">${c.worked ? c.worked.toFixed(2) : "—"}</td>
+      <td class="num" title="Hours they are paid for, before overtime">${c.regular ? c.regular.toFixed(2) : "—"}</td>
       <td class="num">${c.ot ? c.ot.toFixed(2) : "—"}</td>
+      <td class="num">${c.deduction ? `<span style="color:var(--danger)">−${money(c.deduction).slice(1)}</span>` : "—"}</td>
       <td class="num">${c.premium ? money(c.premium) : "—"}</td>
       <td class="num">${c.gross ? money(c.gross) : "—"}</td>
       <td>${flags.join(" ") || ""}</td>
@@ -1677,10 +1955,10 @@ function drawRecordTable() {
     </tr>`;
   }).join("");
   $("#rTable").innerHTML = `<div class="tbl-scroll"><table>
-    <thead><tr><th>Date</th><th>Employee</th><th>📷</th><th>Time in</th><th>📷</th><th>Time out</th>
-    <th class="num">Hrs</th><th class="num">OT</th><th class="num">Premium</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
+    <thead><tr><th>Date</th><th>Employee</th><th>📷</th><th>Time in</th><th>📷</th><th>Time out</th><th>Shift</th>
+    <th class="num">Clocked</th><th class="num">Paid hrs</th><th class="num">OT</th><th class="num">Deduction</th><th class="num">Premium</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
     <tbody>${rows}</tbody>
-    <tfoot><tr><td colspan="6">${list.length} entries</td><td class="num">${tH.toFixed(2)}</td><td class="num">${tOt.toFixed(2)}</td><td class="num">${tPrem ? money(tPrem) : "—"}</td><td class="num">${money(tP)}</td><td colspan="2"></td></tr></tfoot>
+    <tfoot><tr><td colspan="7">${list.length} entries</td><td class="num">${tH.toFixed(2)}</td><td class="num">${tReg.toFixed(2)}</td><td class="num">${tOt.toFixed(2)}</td><td class="num">${tDed ? "−" + money(tDed).slice(1) : "—"}</td><td class="num">${tPrem ? money(tPrem) : "—"}</td><td class="num">${money(tP)}</td><td colspan="2"></td></tr></tfoot>
   </table></div>`;
   // lazy-load thumbs
   $$("#rTable img.thumb").forEach(async img => {
@@ -1719,13 +1997,32 @@ function editRecord(id) {
       </div>
       <div class="note">Leave on <strong>Auto</strong> most of the time. Use this to record what actually happened when someone worked a day their schedule says off — a <em>cover shift</em> (Rest day) or a <em>swap agreed in advance</em> (Ordinary day). Your policy pays rest days at the plain rate, so this doesn't change the pay; it clears the COVER? flag and keeps the record straight. Holidays always follow the calendar.
       <br><br>Manual edits are tagged <strong>EDITED</strong> so you keep an audit trail.</div>
+      <div class="field">
+        <label class="f">Which shift was this? <span class="muted" style="font-weight:400">(pay is based on this)</span></label>
+        <select id="eShift">
+          <option value="" ${!r?.shiftOverride ? "selected" : ""}>Auto — match to the nearest shift in the roster</option>
+          ${rosterShifts(EMPLOYEES, SETTINGS).map(p => {
+            const v = p.start + "-" + p.end;
+            return `<option value="${esc(v)}" ${r?.shiftOverride === v ? "selected" : ""}>${esc(p.start)}–${esc(p.end)} · ${hm(p.hours)}</option>`;
+          }).join("")}
+          <option value="none" ${r?.shiftOverride === "none" ? "selected" : ""}>No shift — pay the clock instead</option>
+        </select>
+      </div>
+      <div class="note">Auto is right nearly always: it snaps the clock-in to whichever shift the roster runs closest to it, so a swapped closing shift isn't read as a six-hour late arrival. Override it when the guess is wrong.</div>
+      <div class="field" style="margin-top:14px">
+        <label class="f" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="eOtBlock" ${r?.otBlock ? "checked" : ""} style="width:auto">
+          This is an overtime block, not their regular shift
+        </label>
+      </div>
+      <div class="note">Set automatically when someone clocks out and clocks back in on the same day. The whole block counts as overtime rather than a second shift.</div>
       <div class="field" style="margin-top:14px">
         <label class="f" style="display:flex;align-items:center;gap:8px;cursor:pointer">
           <input type="checkbox" id="eOt" ${r?.otApproved ? "checked" : ""} style="width:auto">
           Approve overtime for this shift
         </label>
       </div>
-      <div class="note">Off by default. When off, an early clock-in isn't paid and hours past the standard day aren't paid — pay is capped at the scheduled shift. Tick this <strong>only</strong> when you genuinely asked this person to come in early or stay late, and their full actual time (overtime included) will be paid.</div>`,
+      <div class="note">Off by default, so time past the end of the shift pays nothing and just carries an <strong>OT?</strong> flag. Tick it when you actually asked them to stay, and those extra hours get paid. Clocking in <em>early</em> is never overtime — the shift starts when the roster says it starts.</div>`,
     actions: [
       ...(isNew ? [] : [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox("Delete this entry permanently? Photos will be removed too, on this device and in the Google Sheet.", async () => { PhotoDB.del(r.inPhoto); PhotoDB.del(r.outPhoto); RECORDS = RECORDS.filter(x => x.id !== r.id); Sync.saveOutbox(Sync.outbox().filter(x => x !== r.id)); persistRec(); renderTab(CUR_TAB); toast("Entry deleted"); if (Sync.on) { try { await Sync.call({ action: "delete", id: r.id }); } catch (e) { toast("Deleted here, but couldn't remove it from the Sheet: " + e.message, 5000); } } }); } }]),
       { label: "Cancel" },
@@ -1739,12 +2036,15 @@ function editRecord(id) {
           if (outAt && outAt <= inAt) { toast("Time out must be after time in"); return; }
           const restOverride = $("#eRest", el).value || null;
           const otApproved = $("#eOt", el).checked;
+          const otBlock = $("#eOtBlock", el).checked;
+          const shiftOverride = $("#eShift", el).value || null;
           let saved;
           if (isNew) {
-            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", restOverride, otApproved, edited: true, createdAt: Date.now() };
+            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", restOverride, otApproved, otBlock, shiftOverride, autoClosed: false, edited: true, createdAt: Date.now() };
             RECORDS.push(saved);
           } else {
-            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, otApproved, edited: true });
+            // entering a real time out clears the auto-close marker
+            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, otApproved, otBlock, shiftOverride, autoClosed: false, edited: true });
             saved = r;
           }
           persistRec(); Sync.queue(saved.id); Sync.flush(true);
@@ -1799,14 +2099,16 @@ function payrollData() {
   EMPLOYEES.forEach(e => {
     const recs = RECORDS.filter(r => r.empId === e.id && r.date >= PF.from && r.date <= PF.to);
     if (!recs.length) return;
-    const days = new Set(), agg = { reg: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, open: 0, shifts: 0, premDays: 0 };
+    const days = new Set(), agg = { reg: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, underMin: 0, deduction: 0, open: 0, needsFix: 0, shifts: 0, premDays: 0 };
     recs.forEach(r => {
       const c = computeShift(r, e, SETTINGS);
       if (c.flags.includes("open")) agg.open++;
-      if (r.outAt) { days.add(r.date); agg.shifts++; }
+      if (c.flags.includes("needs-fix")) agg.needsFix++;
+      if (r.outAt && !r.otBlock) { days.add(r.date); agg.shifts++; }
       if (c.premium > 0) agg.premDays++;
       agg.reg += c.regular; agg.ot += c.ot; agg.gross += c.gross;
-      agg.base += c.base; agg.premium += c.premium; agg.lateMin += c.lateMin;
+      agg.base += c.base; agg.premium += c.premium;
+      agg.lateMin += c.lateMin; agg.underMin += c.underMin; agg.deduction += c.deduction;
     });
     const sss = agg.gross * (Number(SETTINGS.sssRate) || 0) / 100;
     const phil = agg.gross * (Number(SETTINGS.philhealthRate) || 0) / 100;
@@ -1822,6 +2124,7 @@ function drawPayroll() {
   if (!rows.length) { $("#pOut").innerHTML = `<div class="card"><div class="empty">No attendance in ${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}.</div></div>`; return; }
   const t = rows.reduce((a, r) => ({ days: a.days + r.days, reg: a.reg + r.reg, ot: a.ot + r.ot, gross: a.gross + r.gross, premium: a.premium + r.premium, ded: a.ded + r.ded, net: a.net + r.net }), { days: 0, reg: 0, ot: 0, gross: 0, premium: 0, ded: 0, net: 0 });
   const openWarn = rows.reduce((a, r) => a + r.open, 0);
+  const fixWarn = rows.reduce((a, r) => a + r.needsFix, 0);
   $("#pOut").innerHTML = `
     <div class="card">
       <div class="spread" style="margin-bottom:4px">
@@ -1829,12 +2132,13 @@ function drawPayroll() {
         <div class="center"><div class="tiny muted">TOTAL NET PAYOUT</div><div style="font-size:22px;font-weight:700">${money(t.net)}</div></div>
       </div>
       ${openWarn ? `<div class="strip err" style="margin:10px 0"><span class="dot"></span>${openWarn} shift${openWarn > 1 ? "s have" : " has"} no time out and count as 0 hours. Fix them in Records before paying out.</div>` : ""}
+      ${fixWarn ? `<div class="strip err" style="margin:10px 0"><span class="dot"></span>${fixWarn} shift${fixWarn > 1 ? "s run" : " runs"} longer than a full day — somebody forgot to clock out. ${fixWarn > 1 ? "They pay" : "It pays"} nothing until the times are corrected in Records.</div>` : ""}
       <div class="tbl-scroll" style="margin-top:10px"><table>
         <thead><tr>
-          <th>Employee</th><th class="num">Rate</th><th class="num">Days</th><th class="num">Reg hrs</th><th class="num">OT hrs</th>
-          <th class="num">Reg pay</th><th class="num">OT pay</th><th class="num">Holiday premium</th><th class="num">Gross</th>
-          ${hasDed ? `<th class="num">Deductions</th><th class="num">Net pay</th>` : ""}
-          <th class="num">Late</th>
+          <th>Employee</th><th class="num">Rate</th><th class="num">Days</th><th class="num">Paid hrs</th><th class="num">OT hrs</th>
+          <th class="num">Basic pay</th><th class="num">OT pay</th><th class="num">Holiday premium</th><th class="num">Gross</th>
+          ${hasDed ? `<th class="num">Contributions</th><th class="num">Net pay</th>` : ""}
+          <th class="num">Late / early</th>
         </tr></thead>
         <tbody>${rows.map(r => `<tr>
           <td><strong>${esc(r.e.name)}</strong><br><span class="tiny muted">${esc(r.e.role || "Staff")}</span></td>
@@ -1842,12 +2146,12 @@ function drawPayroll() {
           <td class="num">${r.days}</td>
           <td class="num">${r.reg.toFixed(2)}</td>
           <td class="num">${r.ot ? r.ot.toFixed(2) : "—"}</td>
-          <td class="num">${money(r.reg * r.e.rate)}</td>
+          <td class="num">${money(r.reg * r.e.rate)}${r.deduction ? `<br><span class="tiny" style="color:var(--danger)" title="${r.lateMin}m late + ${r.underMin}m early, deducted per minute">after −${money(r.deduction).slice(1)}</span>` : ""}</td>
           <td class="num">${r.ot ? money(r.ot * r.e.rate * SETTINGS.otMultiplier) : "—"}</td>
           <td class="num">${r.premium ? `+${money(r.premium)}<br><span class="tiny muted">${r.premDays} day${r.premDays > 1 ? "s" : ""}</span>` : "—"}</td>
           <td class="num"><strong>${money(r.gross)}</strong></td>
           ${hasDed ? `<td class="num">${r.ded ? "−" + money(r.ded) : "—"}</td><td class="num"><strong>${money(r.net)}</strong></td>` : ""}
-          <td class="num">${r.lateMin ? r.lateMin + "m" : "—"}</td>
+          <td class="num">${r.lateMin || r.underMin ? `${r.lateMin || 0}m / ${r.underMin || 0}m` : "—"}</td>
         </tr>`).join("")}</tbody>
         <tfoot><tr>
           <td>TOTAL (${rows.length})</td><td></td><td class="num">${t.days}</td>
@@ -1858,6 +2162,7 @@ function drawPayroll() {
           <td></td>
         </tr></tfoot>
       </table></div>
+      <div class="note" style="margin-top:12px"><strong>Paid hrs</strong> is each person's rostered shift hours, less any minutes they arrived late or left early. It is not the raw time on the clock — Records shows both side by side if you want to compare.</div>
     </div>`;
 }
 function showPayslips() {
@@ -1871,8 +2176,11 @@ function showPayslips() {
         <div style="text-align:right"><strong>${esc(r.e.name)}</strong><br><span style="font-size:12px;color:#666">${esc(r.e.role || "Staff")}</span></div>
       </div>
       <div class="kv"><span class="k">Days worked</span><span class="v">${r.days}</span></div>
-      <div class="kv"><span class="k">Regular hours × ${money(r.e.rate)}</span><span class="v">${r.reg.toFixed(2)} → ${money(r.reg * r.e.rate)}</span></div>
-      ${r.ot ? `<div class="kv"><span class="k">Overtime × ${money(r.e.rate * SETTINGS.otMultiplier)}</span><span class="v">${r.ot.toFixed(2)} → ${money(r.ot * r.e.rate * SETTINGS.otMultiplier)}</span></div>` : ""}
+      ${r.deduction ? `<div class="kv"><span class="k">Scheduled hours × ${money(r.e.rate)}</span><span class="v">${(r.reg + r.deduction / r.e.rate).toFixed(2)} → ${money(r.reg * r.e.rate + r.deduction)}</span></div>
+      <div class="kv"><span class="k">Less ${r.lateMin ? r.lateMin + " min late" : ""}${r.lateMin && r.underMin ? " + " : ""}${r.underMin ? r.underMin + " min early out" : ""}</span><span class="v">−${money(r.deduction)}</span></div>
+      <div class="kv"><span class="k">Basic pay</span><span class="v">${r.reg.toFixed(2)} hrs → ${money(r.reg * r.e.rate)}</span></div>`
+      : `<div class="kv"><span class="k">Scheduled hours × ${money(r.e.rate)}</span><span class="v">${r.reg.toFixed(2)} → ${money(r.reg * r.e.rate)}</span></div>`}
+      ${r.ot ? `<div class="kv"><span class="k">Approved overtime × ${money(r.e.rate * SETTINGS.otMultiplier)}</span><span class="v">${r.ot.toFixed(2)} → ${money(r.ot * r.e.rate * SETTINGS.otMultiplier)}</span></div>` : ""}
       ${r.premium ? `<div class="kv"><span class="k">Holiday premium (${r.premDays} day${r.premDays > 1 ? "s" : ""})</span><span class="v">+${money(r.premium)}</span></div>` : ""}
       <div class="kv"><span class="k">Gross pay</span><span class="v">${money(r.gross)}</span></div>
       ${r.sss ? `<div class="kv"><span class="k">SSS</span><span class="v">−${money(r.sss)}</span></div>` : ""}
@@ -1901,27 +2209,37 @@ function renderPeople() {
         <button class="btn sm primary" id="addEmp">+ Add employee</button>
       </div>
       ${EMPLOYEES.length ? `<div class="tbl-scroll"><table>
-        <thead><tr><th>Name</th><th>Position</th><th>Weekly schedule</th><th class="num">Hourly rate</th><th class="num">Daily (8h)</th><th>PIN</th><th>Status</th><th></th></tr></thead>
-        <tbody>${EMPLOYEES.map(e => `<tr>
+        <thead><tr><th>Name</th><th>Position</th><th>Weekly schedule</th><th class="num">Hours/week</th><th class="num">Hourly rate</th><th class="num">Weekly pay</th><th>PIN</th><th>Status</th><th></th></tr></thead>
+        <tbody>${EMPLOYEES.map(e => { const wh = weekHours(e); return `<tr>
           <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">${esc(initials(e.name))}</span><strong>${esc(e.name)}</strong></div></td>
           <td>${esc(e.role || "Staff")}</td>
           <td>${scheduleStrip(e)}</td>
+          <td class="num">${wh ? wh.toFixed(2) : "—"}</td>
           <td class="num">${money(e.rate)}</td>
-          <td class="num">${money(e.rate * SETTINGS.standardHours)}</td>
+          <td class="num">${wh ? money(e.rate * wh) : "—"}</td>
           <td>${e.pin ? "••••" : `<span class="muted">none</span>`}</td>
           <td>${e.active === false ? `<span class="pill out">INACTIVE</span>` : `<span class="pill in">ACTIVE</span>`}</td>
           <td><button class="btn sm" data-ed="${e.id}">Edit</button></td>
-        </tr>`).join("")}</tbody>
+        </tr>`; }).join("")}</tbody>
       </table></div>` : `<div class="empty">No employees yet.</div>`}
-      <div class="note" style="margin-top:12px">Deactivating hides someone from the kiosk but keeps their history and payroll records.</div>
+      <div class="note" style="margin-top:12px"><strong>Pay follows the schedule.</strong> Whatever hours you set here is what each person earns for that day — clocking in a few minutes early or out a few minutes late changes nothing. Only arriving late, leaving early, or approved overtime move the number. Deactivating hides someone from the kiosk but keeps their history.</div>
     </div>`;
   $("#addEmp").onclick = () => editEmp(null);
   function scheduleStrip(e) {
+    const raw = (e && e.weekSchedule) || [];
     const sched = weekScheduleFor(e);
-    return `<div class="row" style="gap:3px">${DAY_NAMES.map((d, i) => {
+    // days still carrying a start time with no end are shown amber — pay can't be
+    // computed properly until an end time is entered
+    const needsEnd = raw.some(s => { const p = parseSlot(s, SETTINGS); return p && p.legacy; });
+    const wk = `<div class="row" style="gap:3px">${DAY_NAMES.map((d, i) => {
       const on = !!sched[i];
-      return `<span class="tiny" title="${d}: ${on ? esc(sched[i]) : "day off"}" style="width:26px;text-align:center;padding:3px 0;border-radius:5px;font-weight:600;${on ? "background:var(--accent-soft);color:var(--accent-dark)" : "background:#f3f4f6;color:#9ca3af"}">${d[0]}</span>`;
+      const legacy = (() => { const p = parseSlot(raw[i], SETTINGS); return p && p.legacy; })();
+      const style = !on ? "background:#f3f4f6;color:#9ca3af"
+        : legacy ? "background:#fef3c7;color:#92400e"
+        : "background:var(--accent-soft);color:var(--accent-dark)";
+      return `<span class="tiny" title="${d}: ${on ? esc(fmtSlot(sched[i])) : "day off"}${legacy ? " (end time not set)" : ""}" style="width:26px;text-align:center;padding:3px 0;border-radius:5px;font-weight:600;${style}">${d[0]}</span>`;
     }).join("")}</div>`;
+    return wk + (needsEnd ? `<div class="tiny" style="color:#92400e;margin-top:3px">⚠ set end times</div>` : "");
   }
   $$("#t-people [data-ed]").forEach(b => b.onclick = () => editEmp(b.dataset.ed));
 }
@@ -1942,9 +2260,9 @@ function editEmp(id) {
           <option value="0" ${e?.active === false ? "selected" : ""}>Inactive</option></select></div>
       </div>
       <h3 class="sec-title" style="margin-top:18px">Weekly schedule</h3>
-      <p class="small muted" style="margin-top:0">Set what time they start on each day they work. Leave a day blank to mark it as their day off — if they get called in on that day it's flagged for you to review, and paid at the plain rate.</p>
+      <p class="small muted" style="margin-top:0"><strong>Set both the start and the end time for every day they work.</strong> This is what their pay is based on — an 8-hour shift pays 8 hours whether they tap in two minutes early or two minutes late. Tick <em>Off</em> for a rest day; if they get called in anyway it's flagged for you to review and paid at the plain rate.</p>
       <div id="fSched"></div>
-      <div class="note" style="margin-top:12px">Daily equivalent at ${SETTINGS.standardHours}h: <span id="fDaily">—</span></div>`,
+      <div class="note" style="margin-top:12px">Hourly rate × their scheduled hours is what they earn. Arriving late or leaving early is deducted per minute; staying past the end time is overtime and pays nothing until you approve it.</div>`,
     actions: [
       ...(e ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, () => { EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id); persistEmp(); renderTab(CUR_TAB); toast("Employee deleted"); }); } }] : []),
       { label: "Cancel" },
@@ -1964,44 +2282,71 @@ function editEmp(id) {
         }
       }]
   });
-  const upd = () => { const el = $("#modalRoot .overlay:last-child"); const v = Number($("#fRate", el).value) || 0; $("#fDaily", el).textContent = money(v * SETTINGS.standardHours); };
   setTimeout(() => {
     const el = $("#modalRoot .overlay:last-child");
-    $("#fRate", el).oninput = upd; upd();
     renderScheduleRows($("#fSched", el), weekScheduleFor(e));
   }, 40);
 }
 
+const DEFAULT_SLOT = () => (SETTINGS.shiftStart || "08:00") + "-" + (SETTINGS.shiftEnd || "17:00");
+/** Total rostered hours across the week — what this person is contracted to earn. */
+function weekHours(e) {
+  return ((e && e.weekSchedule) || []).reduce((n, s) => {
+    const p = parseSlot(s, SETTINGS); return n + (p ? p.hours : 0);
+  }, 0);
+}
 /** Build (or migrate) a 7-slot weekly schedule for an employee being edited. */
 function weekScheduleFor(e) {
-  if (e && e.weekSchedule && e.weekSchedule.length === 7) return e.weekSchedule.slice();
+  if (e && e.weekSchedule && e.weekSchedule.length === 7) {
+    // an older roster held start times only — show them with a provisional end
+    return e.weekSchedule.map(s => {
+      const p = parseSlot(s, SETTINGS);
+      return p ? p.start + "-" + p.end : "";
+    });
+  }
   if (e && e.shiftStart) {
     const rd = e.restDays || [];
-    return [0, 1, 2, 3, 4, 5, 6].map(d => rd.includes(d) ? "" : e.shiftStart);
+    const p = parseSlot(e.shiftStart, SETTINGS);
+    const slot = p ? p.start + "-" + p.end : DEFAULT_SLOT();
+    return [0, 1, 2, 3, 4, 5, 6].map(d => rd.includes(d) ? "" : slot);
   }
-  // brand new employee — assume every day at the shop's default start
-  return [0, 1, 2, 3, 4, 5, 6].map(() => SETTINGS.shiftStart);
+  // brand new employee — assume every day at the shop's default shift
+  return [0, 1, 2, 3, 4, 5, 6].map(() => DEFAULT_SLOT());
 }
 function renderScheduleRows(container, sched) {
-  container.innerHTML = DAY_NAMES.map((d, i) => `
-    <div class="row" style="padding:8px 0;border-bottom:1px solid var(--line)" data-row="${i}">
-      <span style="width:44px;font-weight:600;font-size:14px">${d}</span>
+  const hrsOf = slot => { const p = parseSlot(slot, SETTINGS); return p ? hm(p.hours) : "—"; };
+  container.innerHTML = DAY_NAMES.map((d, i) => {
+    const p = parseSlot(sched[i], SETTINGS);
+    return `<div class="row" style="padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px" data-row="${i}">
+      <span style="width:40px;font-weight:600;font-size:14px">${d}</span>
       <label class="row" style="gap:6px;cursor:pointer">
-        <input type="checkbox" data-off="${i}" ${sched[i] ? "" : "checked"} style="width:16px;height:16px">
-        <span class="small muted">Day off</span>
+        <input type="checkbox" data-off="${i}" ${p ? "" : "checked"} style="width:16px;height:16px">
+        <span class="small muted">Off</span>
       </label>
-      <input type="time" data-start="${i}" value="${esc(sched[i] || SETTINGS.shiftStart)}" style="max-width:130px" ${sched[i] ? "" : "disabled"}>
-    </div>`).join("");
+      <input type="time" data-start="${i}" value="${esc(p ? p.start : SETTINGS.shiftStart)}" style="max-width:118px" ${p ? "" : "disabled"}>
+      <span class="small muted">to</span>
+      <input type="time" data-end="${i}" value="${esc(p ? p.end : SETTINGS.shiftEnd)}" style="max-width:118px" ${p ? "" : "disabled"}>
+      <span class="tiny muted" data-hrs="${i}" style="min-width:52px">${p ? hrsOf(sched[i]) : ""}</span>
+    </div>`;
+  }).join("");
   DAY_NAMES.forEach((_, i) => {
     const off = container.querySelector(`[data-off="${i}"]`);
-    const time = container.querySelector(`[data-start="${i}"]`);
-    off.onchange = () => { time.disabled = off.checked; };
+    const a = container.querySelector(`[data-start="${i}"]`);
+    const b = container.querySelector(`[data-end="${i}"]`);
+    const lbl = container.querySelector(`[data-hrs="${i}"]`);
+    const upd = () => {
+      a.disabled = b.disabled = off.checked;
+      lbl.textContent = off.checked ? "" : hrsOf(a.value + "-" + b.value);
+    };
+    off.onchange = a.oninput = b.oninput = upd;
   });
 }
 function readScheduleRows(container) {
   return [0, 1, 2, 3, 4, 5, 6].map(i => {
-    const off = container.querySelector(`[data-off="${i}"]`).checked;
-    return off ? "" : container.querySelector(`[data-start="${i}"]`).value || SETTINGS.shiftStart;
+    if (container.querySelector(`[data-off="${i}"]`).checked) return "";
+    const a = container.querySelector(`[data-start="${i}"]`).value || SETTINGS.shiftStart;
+    const b = container.querySelector(`[data-end="${i}"]`).value || SETTINGS.shiftEnd;
+    return a + "-" + b;
   });
 }
 
@@ -2038,15 +2383,26 @@ function renderSettings() {
         <div class="field"><label class="f">Max shift length (hrs)</label><input type="number" id="sMax" min="1" max="24" value="${s.maxShiftHours}"></div>
       </div>
       <div class="grid3">
-        <div class="field"><label class="f">Scheduled start</label><input type="time" id="sStart" value="${s.shiftStart}"></div>
+        <div class="field"><label class="f">Default shift start</label><input type="time" id="sStart" value="${s.shiftStart}"></div>
+        <div class="field"><label class="f">Default shift end</label><input type="time" id="sEnd" value="${s.shiftEnd || "17:00"}"></div>
         <div class="field"><label class="f">Grace period (min)</label><input type="number" id="sGrace" min="0" value="${s.gracePeriodMin}"></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label class="f">Overtime starts after (min)</label><input type="number" id="sOtMin" min="0" value="${s.otMinMinutes ?? 15}"></div>
+        <div class="field"><label class="f">Auto-close after (hrs past end)</label><input type="number" id="sAutoClose" min="0" step="0.5" value="${s.autoCloseHours ?? 2}"></div>
         <div class="field"><label class="f">Pay period</label><select id="sPeriod">
           <option value="weekly" ${s.payPeriod === "weekly" ? "selected" : ""}>Weekly (Mon–Sun)</option>
           <option value="semi" ${s.payPeriod === "semi" ? "selected" : ""}>Semi-monthly (1–15, 16–end)</option>
           <option value="monthly" ${s.payPeriod === "monthly" ? "selected" : ""}>Monthly</option></select></div>
       </div>
-      <div class="note">Example: 9h shift → ${s.breakMinutes > 0 ? `${s.breakMinutes}m break deducted → ` : "no break deducted → "}${(9 - s.breakMinutes / 60).toFixed(2)}h paid = ${s.standardHours}h regular + ${Math.max(0, 9 - s.breakMinutes / 60 - s.standardHours).toFixed(2)}h OT at ×${s.otMultiplier}.
-      <br><br><strong>Regular hours / day</strong> is only the point where OT starts — it is not a target. Someone rostered for 5 or 7 hours is simply paid for the hours they work.</div>
+      ${chk("sUnder", "Deduct minutes left early", s.deductUndertime !== false, "Leaving before the shift ends is charged per minute, the same as arriving late. Turn off to pay the full shift regardless of when they clock out.")}
+      ${chk("sSwaps", "Auto-detect shift swaps", s.detectSwaps !== false, "Snaps a clock-in to whichever shift in the roster it's closest to, so someone covering a closing shift isn't recorded as six hours late. You can override any record in Records → Edit.")}
+      <div class="note" style="margin-top:12px">
+        <strong>Pay is based on each person's rostered shift, set per day in the Employees tab.</strong> An 8-hour shift pays 8 hours; a 5-hour shift pays 5. Clocking in early or out a little late changes nothing.
+        <br><br>The clock is what catches exceptions: <strong>late</strong> minutes and <strong>early-out</strong> minutes are deducted per minute, and time past the shift end is <strong>overtime</strong> that pays nothing until you approve it on that record.
+        <br><br><strong>Grace period</strong> is free minutes before lateness is charged${Number(s.gracePeriodMin) ? ` — currently ${s.gracePeriodMin} min` : " — currently 0, so every late minute counts"}.
+        <br><br><strong>Regular hours / day</strong> and the OT multiplier above are only used as a fallback for anyone with no schedule set.
+      </div>
     </div>
 
     <div class="card">
@@ -2180,7 +2536,12 @@ function renderSettings() {
       breakAfterHours: Math.max(0, Number($("#sBreakAfter").value) || 0),
       maxShiftHours: clamp(Number($("#sMax").value) || 16, 1, 24),
       shiftStart: $("#sStart").value || "08:00",
+      shiftEnd: $("#sEnd").value || "17:00",
       gracePeriodMin: Math.max(0, Number($("#sGrace").value) || 0),
+      otMinMinutes: Math.max(0, Number($("#sOtMin").value) || 0),
+      autoCloseHours: Math.max(0, Number($("#sAutoClose").value) || 0),
+      deductUndertime: $("#sUnder").checked,
+      detectSwaps: $("#sSwaps").checked,
       payPeriod: $("#sPeriod").value,
       sssRate: Math.max(0, Number($("#sSss").value) || 0),
       philhealthRate: Math.max(0, Number($("#sPhil").value) || 0),
@@ -2430,14 +2791,18 @@ function csv(rows) {
 function exportRecordsCsv() {
   const list = filteredRecords();
   if (!list.length) return toast("Nothing to export in this range.");
-  const rows = [["Date", "Day type", "Holiday", "Rate multiplier", "Employee", "Position", "Time in", "Time out", "Worked hrs", "Paid hrs", "Regular hrs", "OT hrs",
-    "Hourly rate", "Base pay", "Premium", "Gross pay", "Late (min)", "In location", "Out location", "In map link", "Out map link", "Note", "Edited"]];
+  const rows = [["Date", "Day type", "Holiday", "Rate multiplier", "Employee", "Position", "Shift", "Time in", "Time out",
+    "Clocked hrs", "Scheduled hrs", "Paid hrs", "Regular hrs", "OT hrs", "Late (min)", "Early out (min)",
+    "Hourly rate", "Deduction", "Base pay", "Premium", "Gross pay", "Flags", "In location", "Out location", "In map link", "Out map link", "Note", "Edited"]];
   list.slice().reverse().forEach(r => {
     const e = empById(r.empId), c = computeShift(r, e, SETTINGS);
+    // spell out the date on a time-out that landed on a different day
+    const outTxt = !r.outAt ? "NO TIME OUT"
+      : fmtTime(r.outAt) + (dayKey(new Date(r.inAt)) === dayKey(new Date(r.outAt)) ? "" : " (" + dayKey(new Date(r.outAt)) + ")");
     rows.push([
-      r.date, c.dayType, c.holidayName || "", c.mult, e?.name || "deleted", e?.role || "", fmtTime(r.inAt), r.outAt ? fmtTime(r.outAt) : "NO TIME OUT",
-      c.worked.toFixed(3), c.paid.toFixed(2), c.regular.toFixed(2), c.ot.toFixed(2),
-      e?.rate ?? "", c.base.toFixed(2), c.premium.toFixed(2), c.gross.toFixed(2), c.lateMin || 0,
+      r.date, c.dayType, c.holidayName || "", c.mult, e?.name || "deleted", e?.role || "", c.shift || "", fmtTime(r.inAt), outTxt,
+      c.worked.toFixed(3), c.scheduled.toFixed(2), c.paid.toFixed(2), c.regular.toFixed(2), c.ot.toFixed(2), c.lateMin || 0, c.underMin || 0,
+      e?.rate ?? "", c.deduction ? (-c.deduction).toFixed(2) : "", c.base.toFixed(2), c.premium.toFixed(2), c.gross.toFixed(2), c.flags.join(" "),
       r.inGeo ? `${r.inGeo.lat}, ${r.inGeo.lng} (±${r.inGeo.acc}m)` : "",
       r.outGeo ? `${r.outGeo.lat}, ${r.outGeo.lng} (±${r.outGeo.acc}m)` : "",
       mapLink(r.inGeo) || "", mapLink(r.outGeo) || "",
@@ -2451,15 +2816,18 @@ function exportPayrollCsv() {
   const rows = payrollData();
   if (!rows.length) return toast("Nothing to export.");
   const out = [[`Payroll ${PF.from} to ${PF.to}`], [],
-    ["Employee", "Position", "Hourly rate", "Days worked", "Regular hrs", "OT hrs", "Regular pay", "OT pay", "Holiday premium", "Premium days", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Total deductions", "NET PAY", "Late (min)", "Unclosed shifts"]];
+    ["Employee", "Position", "Hourly rate", "Days worked", "Scheduled hrs", "Late (min)", "Early out (min)", "Time deduction", "Paid hrs", "OT hrs",
+     "Basic pay", "OT pay", "Holiday premium", "Premium days", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Contributions", "NET PAY", "Unclosed shifts", "Needs fixing"]];
   rows.forEach(r => out.push([
-    r.e.name, r.e.role || "", r.e.rate, r.days, r.reg.toFixed(2), r.ot.toFixed(2),
+    r.e.name, r.e.role || "", r.e.rate, r.days,
+    (r.reg + (r.e.rate ? r.deduction / r.e.rate : 0)).toFixed(2), r.lateMin, r.underMin, r.deduction ? (-r.deduction).toFixed(2) : "",
+    r.reg.toFixed(2), r.ot.toFixed(2),
     (r.reg * r.e.rate).toFixed(2), (r.ot * r.e.rate * SETTINGS.otMultiplier).toFixed(2),
     r.premium.toFixed(2), r.premDays, r.gross.toFixed(2),
-    r.sss.toFixed(2), r.phil.toFixed(2), r.pag.toFixed(2), r.ded.toFixed(2), r.net.toFixed(2), r.lateMin, r.open
+    r.sss.toFixed(2), r.phil.toFixed(2), r.pag.toFixed(2), r.ded.toFixed(2), r.net.toFixed(2), r.open, r.needsFix
   ]));
   const t = rows.reduce((a, r) => ({ g: a.g + r.gross, n: a.n + r.net, p: a.p + r.premium }), { g: 0, n: 0, p: 0 });
-  out.push([], ["TOTAL", "", "", "", "", "", "", "", t.p.toFixed(2), "", t.g.toFixed(2), "", "", "", "", t.n.toFixed(2)]);
+  out.push([], ["TOTAL", "", "", "", "", "", "", "", "", "", "", "", t.p.toFixed(2), "", t.g.toFixed(2), "", "", "", "", t.n.toFixed(2)]);
   download(`payroll-${PF.from}-to-${PF.to}.csv`, csv(out), "text/csv");
   toast("Payroll CSV downloaded");
 }
@@ -2488,17 +2856,27 @@ window.addEventListener("beforeunload", stopCam);
     if (CAME_FROM_LINK) toast(`Ready — ${r.employees} staff loaded`, 3000);
   }
   Sync.flush(true);
+  if (autoCloseStale()) renderEmpList();
 })();
+
+// Close anything left hanging, on this device and on anything that synced in.
+// Runs on the admin device only so seven phones don't each write the same fix.
+if (isTrulyAdminDevice()) {
+  autoCloseStale();
+  setInterval(autoCloseStale, 15 * 60000);
+}
 
 // refresh the roster when the kiosk comes back to the foreground
 document.addEventListener("visibilitychange", async () => {
   if (document.hidden || !Sync.on) return;
   const r = await Sync.kioskRefresh(false);
+  autoCloseStale();
   if (r && !r.throttled && !r.error && !$("#s-pick").classList.contains("hide")) renderEmpList();
 });
 
 // expose for testing
-window.__att = { computeShift, periodsFor, distMeters, csv, Sync, deviceName, makeSetupLink, dropDemoStaff,
+window.__att = { computeShift, scheduleFor, shiftForRecord, parseSlot, rosterShifts, weekHours,
+  autoCloseStale, staleOpenRecords, periodsFor, distMeters, csv, Sync, deviceName, makeSetupLink, dropDemoStaff,
   get SETTINGS() { return SETTINGS; }, get RECORDS() { return RECORDS; }, get EMPLOYEES() { return EMPLOYEES; } };
 </script>
 </body>
