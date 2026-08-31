@@ -220,6 +220,3165 @@
     .card,.tbl-scroll{box-shadow:none;border-color:#ccc}
   }
 </style>
+
+<!--
+  Damage detector.
+
+  This is a 160 KB single file, and the usual way it gets installed is a
+  copy-paste into GitHub's web editor. That sometimes drops a chunk, or closes
+  the stylesheet early so the rest of the CSS pours down the page as text — a
+  screen that looks alarming and explains nothing.
+
+  It has to live HERE, ahead of everything, because a file truncated halfway
+  through the main script can't diagnose itself from inside that script. This
+  runs on `load`, which the browser fires even when the script below it failed
+  to parse, and checks the two things that prove the file arrived whole.
+-->
+<script>
+window.addEventListener("load", function () {
+  var rules = 0;
+  try { rules = (document.styleSheets[0] && document.styleSheets[0].cssRules.length) || 0; } catch (e) { rules = -1; }
+
+  // CSS showing up as page text. Ignore the scripts — they legitimately contain
+  // style strings — and look only at what a person would actually see.
+  var visible = "";
+  try {
+    var clone = document.body.cloneNode(true);
+    Array.prototype.forEach.call(clone.querySelectorAll("script,style"), function (n) { n.remove(); });
+    visible = clone.textContent || "";
+  } catch (e) { }
+  var cssAsText = /max-width\s*:\s*640px|border-radius\s*:\s*12px;/.test(visible);
+
+  var missing = ["s-pick", "empSearch", "bigClock", "admin", "t-settings"]
+    .filter(function (id) { return !document.getElementById(id); });
+
+  // set on the last line of the main script — absent means it never finished
+  var ranToEnd = window.__attReady === true;
+
+  if (rules >= 50 && !cssAsText && !missing.length && ranToEnd) return;
+
+  var d = document.createElement("div");
+  d.style.cssText = "position:fixed;inset:0;z-index:99999;background:#fff;color:#111;padding:28px 20px;overflow:auto;font:15px/1.55 -apple-system,Segoe UI,Roboto,sans-serif";
+  d.innerHTML =
+    '<div style="max-width:560px;margin:0 auto">'
+    + '<h2 style="margin:0 0 12px;font-size:22px">This copy of the app didn\'t upload properly</h2>'
+    + '<p><strong>Your attendance records are safe.</strong> They are stored separately — on this device and in your Google Sheet — and replacing this file does not touch them.</p>'
+    + '<p>The file is about 160 KB, which is too big to copy and paste reliably. <strong>Upload it as a file instead:</strong></p>'
+    + '<ol style="padding-left:20px">'
+    + '<li>Open your repository on <strong>github.com</strong>.</li>'
+    + '<li>Click <b>index.html</b>, then the <strong>🗑 bin icon</strong>, then <strong>Commit changes</strong>.</li>'
+    + '<li>Back on the main repo page: <strong>Add file → Upload files</strong>.</li>'
+    + '<li><strong>Drag index.html in from your computer.</strong> Do not open it and copy the text.</li>'
+    + '<li><strong>Commit changes</strong>, wait a minute, then reload here with <strong>Ctrl+Shift+R</strong> (Windows) or <strong>Cmd+Shift+R</strong> (Mac).</li>'
+    + '</ol>'
+    + '<p style="font-size:13px;color:#666;border-top:1px solid #eee;padding-top:12px">What I found: '
+    + rules + ' style rules'
+    + (cssAsText ? ' · stylesheet ended early, CSS is showing as text' : '')
+    + (missing.length ? ' · missing sections: ' + missing.join(", ") : '')
+    + (ranToEnd ? '' : ' · the script stopped before the end (file is cut short)')
+    + '</p></div>';
+  document.body.appendChild(d);
+});
+</script>
+</head>
+<body>
+
+<!-- ============================ KIOSK ============================ -->
+<div id="kiosk">
+  <div class="wrap">
+
+    <!-- STEP 1: pick name -->
+    <section id="s-pick" class="scr">
+      <div class="card head">
+        <div class="spread" style="align-items:flex-start">
+          <div>
+            <h1 id="orgName" style="font-size:24px">Attendance</h1>
+            <div class="muted small" id="orgSub">Time in &amp; time out</div>
+          </div>
+          <div class="center">
+            <div class="clock" id="bigClock" style="font-size:30px">--:--</div>
+            <div class="tiny muted" id="bigDate"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <label class="f">Select your name <span style="color:var(--danger)">*</span></label>
+        <input id="empSearch" type="search" placeholder="Search your name…" autocomplete="off">
+        <div class="emp-list" id="empList"></div>
+      </div>
+      <div class="footer-link noprint">
+        <span class="pill syncBadge out">Local only</span>
+        &nbsp; <a href="#" id="toAdmin">Admin dashboard</a>
+      </div>
+    </section>
+
+    <!-- STEP 2: choose action -->
+    <section id="s-action" class="scr hide">
+      <div class="steps"><i class="on"></i><i></i><i></i></div>
+      <div class="card">
+        <div class="row" style="margin-bottom:16px">
+          <div class="avatar lg" id="aAvatar">--</div>
+          <div class="grow">
+            <div style="font-weight:700;font-size:18px" id="aName">—</div>
+            <div class="small muted" id="aRole">—</div>
+          </div>
+        </div>
+        <div id="aStatus" style="margin-bottom:18px"></div>
+        <div class="btn-row" style="margin-bottom:10px">
+          <button class="btn primary lg" id="btnIn">Time In</button>
+          <button class="btn lg" id="btnOut">Time Out</button>
+        </div>
+        <button class="btn ghost block" id="aBack">← Not you? Go back</button>
+      </div>
+    </section>
+
+    <!-- STEP 2b: employee PIN -->
+    <section id="s-pin" class="scr hide">
+      <div class="steps"><i class="on"></i><i class="on"></i><i></i></div>
+      <div class="card center">
+        <h2 style="font-size:18px;margin-bottom:4px">Enter your PIN</h2>
+        <div class="small muted" id="pinWho">—</div>
+        <div class="pin-dots" id="pinDots"><i></i><i></i><i></i><i></i></div>
+        <div class="pinpad" id="pinPad"></div>
+        <button class="btn ghost block" id="pinBack" style="margin-top:16px">← Back</button>
+      </div>
+    </section>
+
+    <!-- STEP 3: photo -->
+    <section id="s-photo" class="scr hide">
+      <div class="steps"><i class="on"></i><i class="on"></i><i></i></div>
+      <div class="card">
+        <div class="spread" style="margin-bottom:12px">
+          <div>
+            <h2 style="font-size:17px" id="pTitle">Take your photo</h2>
+            <div class="small muted">Face the camera so we can verify it's you</div>
+          </div>
+          <span class="pill in" id="pAction">TIME IN</span>
+        </div>
+        <div class="cam-shell" id="camShell">
+          <video id="video" autoplay playsinline muted></video>
+          <div class="cam-msg hide" id="camMsg"></div>
+        </div>
+        <div style="margin:14px 0 4px" id="geoStrip"></div>
+        <div class="center" style="margin:18px 0 10px">
+          <div class="shutter" id="shutter" role="button" aria-label="Take photo"><span></span></div>
+        </div>
+        <input type="file" id="fileCam" accept="image/*" capture="user" class="hide">
+        <button class="btn ghost block hide" id="btnFileCam">📷 Use device camera instead</button>
+        <button class="btn ghost block" id="pBack" style="margin-top:6px">← Back</button>
+      </div>
+    </section>
+
+    <!-- STEP 4: confirm -->
+    <section id="s-confirm" class="scr hide">
+      <div class="steps"><i class="on"></i><i class="on"></i><i class="on"></i></div>
+      <div class="card">
+        <h2 style="font-size:17px;margin-bottom:12px">Confirm your entry</h2>
+        <div class="cam-shell" style="aspect-ratio:1/1;max-height:34vh">
+          <img id="shot" alt="Captured photo">
+        </div>
+        <div style="margin-top:14px">
+          <div class="kv"><span class="k">Employee</span><span class="v" id="cName">—</span></div>
+          <div class="kv"><span class="k">Action</span><span class="v" id="cAction">—</span></div>
+          <div class="kv"><span class="k">Time</span><span class="v" id="cTime">—</span></div>
+          <div class="kv"><span class="k">Location</span><span class="v" id="cLoc">—</span></div>
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label class="f">Note <span class="muted" style="font-weight:400">(optional)</span></label>
+          <input id="cNote" placeholder="e.g. client visit, delivery run…" maxlength="120">
+        </div>
+        <div class="btn-row">
+          <button class="btn" id="cRetake">Retake</button>
+          <button class="btn primary" id="cSubmit">Submit</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- STEP 5: done -->
+    <section id="s-done" class="scr hide">
+      <div class="card center">
+        <div class="check">✓</div>
+        <h2 style="font-size:20px" id="dTitle">Recorded</h2>
+        <div class="muted small" id="dSub" style="margin-bottom:16px">—</div>
+        <div style="text-align:left" id="dSummary"></div>
+        <button class="btn primary block" id="dDone" style="margin-top:18px">Done</button>
+        <div class="tiny muted" style="margin-top:10px">Returning to home in <span id="dCount">8</span>s</div>
+        <div style="margin-top:8px"><span class="pill syncBadge out">Local only</span></div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ============================ ADMIN ============================ -->
+<div id="admin" class="hide">
+  <div id="previewBanner" class="hide" style="background:#111;color:#fff;text-align:center;padding:8px 12px;font-size:13px">
+    👀 Previewing as a staff device would see it — your real admin access is untouched.
+    <button class="btn sm ghost" id="exitPreview" style="margin-left:10px;color:#fff;border-color:#666">Exit preview</button>
+  </div>
+  <div class="topbar noprint">
+    <div class="topbar-in">
+      <div class="row">
+        <strong style="font-size:16px" id="adminOrg">Admin</strong>
+        <span class="pill out" id="adminClock">--:--</span>
+        <span class="pill syncBadge out">Local only</span>
+      </div>
+      <div class="row">
+        <button class="btn sm" id="btnSyncNow">⟳ Sync</button>
+        <button class="btn sm" id="toKiosk">← Kiosk</button>
+        <button class="btn sm ghost" id="btnLock">Lock</button>
+      </div>
+    </div>
+    <div class="topbar-in" style="padding-top:0">
+      <div class="tabs" id="tabs">
+        <button class="tab on" data-tab="dash">Dashboard</button>
+        <button class="tab" data-tab="records">Records</button>
+        <button class="tab" data-tab="payroll">Payroll</button>
+        <button class="tab" data-tab="people">Employees</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </div>
+    </div>
+  </div>
+  <div class="wrap admin">
+    <div id="t-dash" class="tabpane"></div>
+    <div id="t-records" class="tabpane hide"></div>
+    <div id="t-payroll" class="tabpane hide"></div>
+    <div id="t-people" class="tabpane hide"></div>
+    <div id="t-settings" class="tabpane hide"></div>
+  </div>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toast"></div>
+
+<script>
+/* =====================================================================
+   ATTENDANCE / HR / PAYROLL TRACKER  —  single-file static app
+   Data: localStorage (employees, records, settings) + IndexedDB (photos)
+   ===================================================================== */
+"use strict";
+
+/* ------------------------- tiny helpers ------------------------- */
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
+
+function toast(msg, ms = 2600) {
+  const t = $("#toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove("show"), ms);
+}
+
+/* ------------------------- date / time ------------------------- */
+const pad = n => String(n).padStart(2, "0");
+const dayKey = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const parseKey = k => { const [y, m, d] = k.split("-").map(Number); return new Date(y, m - 1, d); };
+function fmtTime(ts) {
+  if (!ts) return "—";
+  const d = new Date(ts); let h = d.getHours(); const ap = h < 12 ? "AM" : "PM";
+  h = h % 12 || 12; return `${h}:${pad(d.getMinutes())} ${ap}`;
+}
+function fmtDateShort(k) {
+  const d = parseKey(k);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" }) +
+    " (" + d.toLocaleDateString(undefined, { weekday: "short" }) + ")";
+}
+function fmtDateLong(d) {
+  return d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
+}
+function hm(hours) {
+  if (!hours || hours <= 0) return "0h 00m";
+  const h = Math.floor(hours), m = Math.round((hours - h) * 60);
+  return m === 60 ? `${h + 1}h 00m` : `${h}h ${pad(m)}m`;
+}
+const todayKey = () => dayKey(new Date());
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* Backend capabilities this version of the website depends on. The Apps Script
+   reports what it supports on `ping`; anything missing here means an old script
+   is still deployed and the Sheet's pay figures won't match the dashboard. */
+const SCRIPT_NEEDS = [
+  { id: "schedule-pay", label: "schedule-based pay" },
+  { id: "swaps", label: "shift-swap matching" },
+  { id: "ot-blocks", label: "overtime blocks" },
+  { id: "auto-close", label: "forgotten clock-out handling" },
+  { id: "sort", label: "sorting the Sheet by date" },
+  { id: "holiday-rates", label: "your holiday rates" },
+];
+
+/* ------------------------- storage ------------------------- */
+const LS = {
+  emp: "att.employees.v1",
+  rec: "att.records.v1",
+  set: "att.settings.v1",
+};
+function load(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch (e) { console.warn("load fail", key, e); return fallback; }
+}
+/**
+ * Write to localStorage, and be honest when it doesn't work.
+ *
+ * A failed write means the data exists only in memory and dies on the next
+ * refresh. A toast that fades after three seconds is not an adequate way to
+ * report that, so a failure also raises a banner that stays until it's fixed,
+ * and callers that matter check the return value.
+ */
+let STORAGE_FAILED = false;
+function save(key, val) {
+  try {
+    localStorage.setItem(key, JSON.stringify(val));
+    if (STORAGE_FAILED) { STORAGE_FAILED = false; paintStorageAlarm(); }
+    return true;
+  } catch (e) {
+    console.error("localStorage write failed", key, e);
+    if (!STORAGE_FAILED) { STORAGE_FAILED = true; paintStorageAlarm(); }
+    toast("Storage full — nothing is being saved on this device.", 6000);
+    return false;
+  }
+}
+/** A persistent bar, because silently not saving payroll data is unacceptable. */
+function paintStorageAlarm() {
+  let bar = document.getElementById("storageAlarm");
+  if (!STORAGE_FAILED) { if (bar) bar.remove(); return; }
+  if (bar) return;
+  bar = document.createElement("div");
+  bar.id = "storageAlarm";
+  bar.style.cssText = "position:fixed;left:0;right:0;bottom:0;z-index:300;background:#b91c1c;color:#fff;padding:12px 16px;font:600 14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif;text-align:center";
+  bar.textContent = "This device is out of space — new entries are not being saved here. Tell your manager.";
+  document.body.appendChild(bar);
+}
+
+const DEFAULT_SETTINGS = {
+  orgName: "3:45 Coffee House",
+  tagline: "Staff time in & time out",
+  accent: "#0f766e",
+  currency: "₱",
+  standardHours: 8,
+  otMultiplier: 1,
+  breakMinutes: 0,
+  breakAfterHours: 5,
+  roundToMinutes: 1,
+  gracePeriodMin: 0,           // free minutes before lateness is charged. 0 = none.
+  shiftStart: "08:00",
+  shiftEnd: "17:00",
+  maxShiftHours: 16,
+  otMinMinutes: 15,            // ignore overruns shorter than this — tidying up isn't overtime
+  autoCloseHours: 2,           // close a forgotten shift this long after its scheduled end
+  detectSwaps: true,           // snap a clock-in to the nearest shift in the roster
+  deductUndertime: true,       // charge minutes left early, same as minutes arrived late
+  requirePin: false,
+  requirePhoto: true,
+  requireLocation: true,
+  shopLat: "", shopLng: "", shopRadius: 150,
+  payPeriod: "semi",           // weekly | semi | monthly
+  adminPin: "1234",
+  sssRate: 0, philhealthRate: 0, pagibigFixed: 0,   // optional deductions
+  syncUrl: "", syncSecret: "", syncPhotos: true,    // Google Sheets backend
+  syncStaffSecret: "",         // low-privilege key; admin device only, used to build the staff link
+  syncRole: "admin",           // "admin" on your device, "staff" on anything set up from the link
+  holidayPremiums: true,
+  regularHolidayMult: 1.0,     // this shop pays no premium on regular holidays
+  specialHolidayMult: 1.3,     // 130% on special non-working days
+  holidays: [],                                     // [{date,name,type}] type: regular|special|working
+};
+
+/* Philippine holidays — Proclamation No. 1006 (2026). Eid al-Fitr and Eid al-Adha
+   are proclaimed separately each year, so add them by hand when announced. */
+const PH_HOLIDAYS_2026 = [
+  { date: "2026-01-01", name: "New Year's Day", type: "regular" },
+  { date: "2026-02-17", name: "Chinese New Year", type: "special" },
+  { date: "2026-02-25", name: "EDSA People Power Anniversary", type: "working" },
+  { date: "2026-04-02", name: "Maundy Thursday", type: "regular" },
+  { date: "2026-04-03", name: "Good Friday", type: "regular" },
+  { date: "2026-04-04", name: "Black Saturday", type: "special" },
+  { date: "2026-04-09", name: "Araw ng Kagitingan", type: "regular" },
+  { date: "2026-05-01", name: "Labor Day", type: "regular" },
+  { date: "2026-06-12", name: "Independence Day", type: "regular" },
+  { date: "2026-08-21", name: "Ninoy Aquino Day", type: "special" },
+  { date: "2026-08-31", name: "National Heroes Day", type: "regular" },
+  { date: "2026-11-01", name: "All Saints' Day", type: "special" },
+  { date: "2026-11-02", name: "All Souls' Day", type: "special" },
+  { date: "2026-11-30", name: "Bonifacio Day", type: "regular" },
+  { date: "2026-12-08", name: "Feast of the Immaculate Conception", type: "special" },
+  { date: "2026-12-24", name: "Christmas Eve", type: "special" },
+  { date: "2026-12-25", name: "Christmas Day", type: "regular" },
+  { date: "2026-12-30", name: "Rizal Day", type: "regular" },
+  { date: "2026-12-31", name: "Last Day of the Year", type: "special" },
+];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+let SETTINGS = Object.assign({}, DEFAULT_SETTINGS, load(LS.set, {}));
+let EMPLOYEES = load(LS.emp, null);
+let RECORDS = load(LS.rec, []);
+
+/* "Preview as staff" — lets a real admin see what a staff device sees,
+   without touching the stored syncRole or keys. Lives in sessionStorage only,
+   so it never survives a closed tab and can never cause the lockout that
+   comes from actually opening the staff link on the admin device. */
+let PREVIEW_STAFF = sessionStorage.getItem("att.previewStaff") === "1";
+function setPreviewStaff(on) {
+  PREVIEW_STAFF = on;
+  if (on) sessionStorage.setItem("att.previewStaff", "1");
+  else sessionStorage.removeItem("att.previewStaff");
+  location.reload();
+}
+
+/* Sample staff exist only so a brand-new install isn't an empty screen.
+   A device opened through a staff setup link skips them entirely, and they
+   are cleared automatically the moment a real roster arrives from the Sheet. */
+const ARRIVED_VIA_LINK = /[#&]s=/.test(location.hash || "");
+if (!EMPLOYEES) {
+  EMPLOYEES = ARRIVED_VIA_LINK ? [] : [
+    { id: uid(), name: "Juan Dela Cruz", role: "Barista",  rate: 90,  pin: "1111", active: true, demo: true },
+    { id: uid(), name: "Maria Santos",   role: "Barista",  rate: 90,  pin: "2222", active: true, demo: true },
+    { id: uid(), name: "Ana Reyes",      role: "Shift Lead", rate: 110, pin: "3333", active: true, demo: true },
+  ];
+  save(LS.emp, EMPLOYEES);
+  save(LS.set, SETTINGS);
+}
+
+/** Drop leftover sample staff once the real roster is known. */
+function dropDemoStaff() {
+  const before = EMPLOYEES.length;
+  EMPLOYEES = EMPLOYEES.filter(e => !e.demo || RECORDS.some(r => r.empId === e.id));
+  if (EMPLOYEES.length !== before) persistEmp();
+  return before - EMPLOYEES.length;
+}
+
+const persistEmp = () => save(LS.emp, EMPLOYEES);
+const persistRec = () => save(LS.rec, RECORDS);
+const persistSet = () => save(LS.set, SETTINGS);
+
+/* ------------------------- photo store (IndexedDB) ------------------------- */
+const PhotoDB = (() => {
+  let dbp = null;
+  function open() {
+    if (dbp) return dbp;
+    dbp = new Promise((res, rej) => {
+      const r = indexedDB.open("att-photos", 1);
+      r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains("p")) r.result.createObjectStore("p"); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    }).catch(e => { console.warn("IDB unavailable", e); return null; });
+    return dbp;
+  }
+  async function tx(mode) { const db = await open(); return db ? db.transaction("p", mode).objectStore("p") : null; }
+  return {
+    async put(id, dataUrl) {
+      const s = await tx("readwrite"); if (!s) return false;
+      return new Promise(res => { const q = s.put(dataUrl, id); q.onsuccess = () => res(true); q.onerror = () => res(false); });
+    },
+    async get(id) {
+      if (!id) return null;
+      const s = await tx("readonly"); if (!s) return null;
+      return new Promise(res => { const q = s.get(id); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null); });
+    },
+    async del(id) {
+      if (!id) return; const s = await tx("readwrite"); if (!s) return;
+      s.delete(id);
+    },
+    async keys() {
+      const s = await tx("readonly"); if (!s) return [];
+      return new Promise(res => { const q = s.getAllKeys(); q.onsuccess = () => res(q.result || []); q.onerror = () => res([]); });
+    },
+    async all() {
+      const s = await tx("readonly"); if (!s) return {};
+      const keys = await this.keys(); const out = {};
+      for (const k of keys) out[k] = await this.get(k);
+      return out;
+    }
+  };
+})();
+
+/* =====================================================================
+   GOOGLE SHEETS SYNC
+   Every entry is saved locally first, then queued in an "outbox" and
+   pushed to the Apps Script backend. If there's no signal the entry
+   stays queued and goes out on the next successful connection.
+   ===================================================================== */
+const OUTBOX_KEY = "att.outbox.v1";
+const DEVICE_KEY = "att.device.v1";
+
+/* ---- one-link staff setup -------------------------------------------
+   The share link carries the web app URL + the STAFF key, so a staff phone
+   configures itself on first open.
+
+   The staff key is deliberately low-privilege: the backend lets it submit
+   clock-ins and read the list of names, nothing else. It cannot read
+   records, see anyone's pay rate, delete entries, or change the roster.
+   Assume this link will end up somewhere you didn't intend — a screenshot,
+   a forwarded chat, an ex-employee's phone — and design accordingly.
+   The admin key never leaves your own device. -------------------------- */
+function makeSetupLink() {
+  const staffKey = SETTINGS.syncStaffSecret || "";
+  if (!staffKey) return "";
+  const payload = JSON.stringify({ u: SETTINGS.syncUrl, k: staffKey, n: SETTINGS.orgName, r: "staff" });
+  const b64 = btoa(unescape(encodeURIComponent(payload))).replace(/=+$/, "");
+  return location.origin + location.pathname + "#s=" + b64;
+}
+function applySetupLink() {
+  const m = (location.hash || "").match(/[#&]s=([A-Za-z0-9+/=_-]+)/);
+  if (!m) return false;
+  try {
+    const json = decodeURIComponent(escape(atob(m[1])));
+    const d = JSON.parse(json);
+    if (!d.u || !d.k) return false;
+    SETTINGS.syncUrl = d.u;
+    SETTINGS.syncSecret = d.k;
+    SETTINGS.syncStaffSecret = "";        // a staff device never holds the admin key
+    SETTINGS.syncRole = d.r === "admin" ? "admin" : "staff";
+    if (d.n) SETTINGS.orgName = d.n;
+    persistSet();
+    history.replaceState(null, "", location.pathname + location.search);
+    return true;
+  } catch (e) { return false; }
+}
+/** True on your laptop, false on any phone set up from the staff link. */
+function isAdminDevice() { return SETTINGS.syncRole !== "staff" && !PREVIEW_STAFF; }
+/* Whether this device is *really* set up as admin, ignoring any preview override.
+   Used to decide whether the preview toggle itself should be offered. */
+function isTrulyAdminDevice() { return SETTINGS.syncRole !== "staff"; }
+
+/** Cheap change-detector for the employee roster. */
+function rosterHash() {
+  const s = JSON.stringify(EMPLOYEES.map(e => [e.id, e.name, e.role, e.rate, e.pin, e.active !== false, (e.weekSchedule || []).join("|")]));
+  let h = 0;
+  for (let i = 0; i < s.length; i++) { h = (h << 5) - h + s.charCodeAt(i); h |= 0; }
+  return String(h);
+}
+
+const driveIdFrom = url => (String(url || "").match(/\/d\/([^/]+)/) || [])[1] || "";
+
+function deviceName() {
+  let d = localStorage.getItem(DEVICE_KEY);
+  if (!d) {
+    const ua = navigator.userAgent;
+    const guess = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" :
+      /Android/.test(ua) ? "Android phone" : /Mac/.test(ua) ? "Mac" :
+      /Windows/.test(ua) ? "Windows PC" : "Device";
+    d = guess + " " + Math.random().toString(36).slice(2, 6).toUpperCase();
+    localStorage.setItem(DEVICE_KEY, d);
+  }
+  return d;
+}
+function setDeviceName(n) { localStorage.setItem(DEVICE_KEY, n); }
+
+const Sync = {
+  get on() { return !!(SETTINGS.syncUrl && SETTINGS.syncSecret); },
+  status: "idle",     // idle | sending | ok | error | offline
+  lastError: "",
+  lastSync: Number(localStorage.getItem("att.lastSync") || 0),
+
+  outbox() { return load(OUTBOX_KEY, []); },
+  saveOutbox(o) { save(OUTBOX_KEY, o); paintSyncBadges(); },
+
+  /** Queue a record id for upload. Photos are attached at send time. */
+  queue(recId) {
+    if (!this.on) return;
+    const o = this.outbox();
+    if (!o.includes(recId)) { o.push(recId); this.saveOutbox(o); }
+  },
+
+  /** Low-level call. text/plain avoids a CORS preflight Apps Script can't answer. */
+  async call(payload, timeoutMs = 45000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(SETTINGS.syncUrl, {
+        method: "POST",
+        headers: { "Content-Type": "text/plain;charset=utf-8" },
+        body: JSON.stringify(Object.assign({ secret: SETTINGS.syncSecret, device: deviceName() }, payload)),
+        redirect: "follow",
+        signal: ctrl.signal
+      });
+      const text = await res.text();
+      let json;
+      try { json = JSON.parse(text); }
+      catch (e) { throw new Error("Unexpected reply from Google. Check that the web app is deployed with access set to “Anyone”."); }
+      if (!json.ok) throw new Error(json.error || "Server refused the request");
+      return json;
+    } finally { clearTimeout(t); }
+  },
+
+  /**
+   * Same as call(), but rides out the transient failures.
+   *
+   * Google Apps Script serialises requests behind a script lock and refuses new
+   * ones while it's busy. Re-uploading the whole history fires twenty-odd
+   * batches in a row, so some are certain to arrive while the previous one is
+   * still writing. Those aren't errors, they're back-pressure — wait and retry
+   * rather than abandoning the run and making the person press the button again.
+   */
+  async callRetry(payload, timeoutMs = 45000, tries = 5) {
+    let wait = 1500;
+    for (let i = 1; ; i++) {
+      try {
+        return await this.call(payload, timeoutMs);
+      } catch (err) {
+        const busy = /busy|lock|timed out|timeout|abort|network|fetch|503|429/i.test(err.message || "");
+        if (!busy || i >= tries) throw err;
+        this.status = "sending";
+        this.lastError = `Google is busy — retrying (${i}/${tries - 1})`;
+        paintSyncBadges();
+        await sleep(wait);
+        wait = Math.min(wait * 2, 15000);   // 1.5s, 3s, 6s, 12s
+      }
+    }
+  },
+
+  /**
+   * Just the pay rules the backend computes with — nothing else.
+   *
+   * This used to send the whole SETTINGS object, which carries syncSecret,
+   * syncStaffSecret and adminPin. Seven phones were transmitting the shop's
+   * credentials on every single clock-in for no reason at all. The Apps Script
+   * reads exactly the fields below and nothing more.
+   */
+  payRules() {
+    const s = SETTINGS;
+    return {
+      standardHours: s.standardHours, otMultiplier: s.otMultiplier, otMinMinutes: s.otMinMinutes,
+      breakMinutes: s.breakMinutes, breakAfterHours: s.breakAfterHours,
+      roundToMinutes: s.roundToMinutes, gracePeriodMin: s.gracePeriodMin,
+      maxShiftHours: s.maxShiftHours, deductUndertime: s.deductUndertime, detectSwaps: s.detectSwaps,
+      holidayPremiums: s.holidayPremiums, regularHolidayMult: s.regularHolidayMult,
+      specialHolidayMult: s.specialHolidayMult, holidays: s.holidays || []
+    };
+  },
+
+  async ping() {
+    return this.call({ action: "ping" }, 20000);
+  },
+
+  /** Build the wire format for one local record. */
+  async pack(rec) {
+    const e = empById(rec.empId) || {};
+    const out = {
+      id: rec.id, empId: rec.empId, date: rec.date,
+      inAt: rec.inAt ? new Date(rec.inAt).toISOString() : null,
+      outAt: rec.outAt ? new Date(rec.outAt).toISOString() : null,
+      inGeo: rec.inGeo, outGeo: rec.outGeo,
+      inNote: rec.inNote, outNote: rec.outNote,
+      restOverride: rec.restOverride || "",
+      otApproved: !!rec.otApproved,
+      otBlock: !!rec.otBlock,
+      shiftOverride: rec.shiftOverride || "",
+      autoClosed: !!rec.autoClosed,
+      edited: !!rec.edited,
+      roster: EMPLOYEES.map(x => ({ weekSchedule: x.weekSchedule || [] })),   // lets the backend match swaps too
+      employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), weekSchedule: e.weekSchedule || null, shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
+      inPhotoId: rec.inPhotoDriveId || "", outPhotoId: rec.outPhotoDriveId || ""
+    };
+    if (SETTINGS.syncPhotos) {
+      if (rec.inPhoto && !rec.inPhotoDriveId) out.inPhotoData = await PhotoDB.get(rec.inPhoto);
+      if (rec.outPhoto && !rec.outPhotoDriveId) out.outPhotoData = await PhotoDB.get(rec.outPhoto);
+    }
+    return out;
+  },
+
+  /** Send everything waiting in the outbox. Safe to call often. */
+  async flush(silent = true) {
+    if (!this.on) return { skipped: true };
+    let ids = this.outbox();
+    if (!navigator.onLine) { this.status = "offline"; paintSyncBadges(); return { offline: true }; }
+    if (!ids.length) {
+      // nothing to send, but the roster may still be out of date
+      try { await this.pushEmployeesIfChanged(); this.status = "ok"; } catch (e) { }
+      paintSyncBadges();
+      return { sent: 0 };
+    }
+
+    this.status = "sending"; paintSyncBadges();
+    const batchSize = SETTINGS.syncPhotos ? 4 : 25;   // photos make payloads big
+    const total = ids.length;
+    let sent = 0;
+    try {
+      await this.pushEmployeesIfChanged();   // keep names + rates on the Sheet current
+      while (ids.length) {
+        const chunk = ids.slice(0, batchSize);
+        const packed = [];
+        for (const id of chunk) {
+          const r = RECORDS.find(x => x.id === id);
+          if (r) packed.push(await this.pack(r));
+        }
+        if (packed.length) {
+          // tell the backend when this is the last batch, so it sorts the sheet once
+          const last = ids.length <= chunk.length;
+          const res = await this.callRetry({ action: "push", records: packed, settings: this.payRules(), last });
+          (res.results || []).forEach(r => {
+            const local = RECORDS.find(x => x.id === r.id);
+            if (local) {
+              if (r.inPhotoUrl) local.inPhotoDriveId = r.inPhotoUrl.match(/\/d\/([^/]+)/)?.[1] || "";
+              if (r.outPhotoUrl) local.outPhotoDriveId = r.outPhotoUrl.match(/\/d\/([^/]+)/)?.[1] || "";
+              local.synced = Date.now();
+            }
+          });
+          persistRec();
+          sent += packed.length;
+        }
+        ids = ids.slice(chunk.length);
+        this.saveOutbox(ids);
+        // Let Google finish writing before the next batch lands. Without this the
+        // requests overlap, the script lock times out, and a long re-upload dies
+        // a third of the way through.
+        if (ids.length) {
+          if (!silent) this.lastError = `Uploading ${sent} of ${total}…`;
+          paintSyncBadges();
+          await sleep(600);
+        }
+      }
+      this.status = "ok"; this.lastError = "";
+      this.lastSync = Date.now(); localStorage.setItem("att.lastSync", this.lastSync);
+      if (!silent && sent) toast(`Synced ${sent} entr${sent === 1 ? "y" : "ies"} to Google Sheets`);
+    } catch (err) {
+      this.status = "error";
+      this.lastError = err.message + (sent ? ` · ${sent} of ${total} uploaded, the rest are still queued` : "");
+      if (!silent) toast("Sync stopped after " + sent + " of " + total + ": " + err.message + ". Press the button again to carry on where it left off.", 7000);
+    }
+    paintSyncBadges();
+    return { sent, total };
+  },
+
+  /** Admin only — the Sheet's roster is the master copy and staff can't rewrite it. */
+  async pushEmployees() {
+    if (!this.on || !isAdminDevice()) return;
+    try {
+      await this.call({ action: "pushEmployees", employees: EMPLOYEES });
+      localStorage.setItem("att.rosterHash", rosterHash());
+    } catch (e) { /* non-critical — retried on the next flush */ }
+  },
+
+  /** Upload the roster only when it has actually changed. */
+  async pushEmployeesIfChanged() {
+    if (!this.on || !isAdminDevice()) return;
+    if (localStorage.getItem("att.rosterHash") === rosterHash()) return;
+    await this.pushEmployees();
+  },
+
+  /**
+   * Match an incoming employee to a local one. If the ids differ but the
+   * names match, the Sheet wins: the local record is re-pointed at the
+   * Sheet's id so the two devices stop keeping separate copies of one person.
+   */
+  reconcileEmployee(incoming) {
+    if (!incoming || !incoming.id) return;
+    const byId = empById(incoming.id);
+    if (byId) { Object.assign(byId, incoming, { fromSheet: false }); return; }
+
+    const key = String(incoming.name || "").trim().toLowerCase();
+    const byName = EMPLOYEES.find(e => String(e.name || "").trim().toLowerCase() === key);
+    if (byName) {
+      const oldId = byName.id;
+      RECORDS.forEach(r => { if (r.empId === oldId) r.empId = incoming.id; });
+      const ob = this.outbox();
+      Object.assign(byName, incoming, { fromSheet: false });
+      this.saveOutbox(ob);
+      return;
+    }
+    EMPLOYEES.push(Object.assign({}, incoming, { fromSheet: false }));
+  },
+
+  /**
+   * Lightweight refresh for the clock-in screen. Pulls the staff list and any
+   * shift that is still open, so ANY device shows the real roster and can
+   * close a shift that was started on a different phone.
+   */
+  async kioskRefresh(force = false) {
+    if (!this.on) return { skipped: true };
+    const last = Number(localStorage.getItem("att.kioskSync") || 0);
+    if (!force && Date.now() - last < 45000) return { throttled: true };
+    try {
+      const res = await this.call({ action: "kiosk" }, 25000);
+      (res.employees || []).forEach(e => this.reconcileEmployee(e));
+      if ((res.employees || []).length) dropDemoStaff();
+      let opened = 0;
+      (res.open || []).forEach(r => {
+        if (!r.id || !r.inAt) return;
+        if (RECORDS.some(x => x.id === r.id)) return;
+        RECORDS.push({
+          id: r.id, empId: r.empId, date: r.date, inAt: r.inAt, outAt: null,
+          inPhoto: null, outPhoto: null, inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: "",
+          inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: "",
+          inGeo: null, outGeo: null, inNote: r.inNote || "", outNote: "",
+          restOverride: r.restOverride || null, otApproved: !!r.otApproved,
+          otBlock: !!r.otBlock, shiftOverride: r.shiftOverride || null, autoClosed: !!r.autoClosed,
+          edited: false, remote: true, device: r.device || "", createdAt: r.inAt
+        });
+        opened++;
+      });
+      persistEmp();
+      if (opened) persistRec();
+      localStorage.setItem("att.kioskSync", String(Date.now()));
+      this.status = "ok"; this.lastError = "";
+      paintSyncBadges();
+      return { employees: (res.employees || []).length, opened };
+    } catch (e) {
+      this.status = "error"; this.lastError = e.message; paintSyncBadges();
+      return { error: e.message };
+    }
+  },
+
+  /** Pull everything from the Sheet and merge into local records. Admin only. */
+  async pull() {
+    if (!this.on) throw new Error("Sync isn't set up yet");
+    if (!isAdminDevice()) throw new Error("This device is set up as a staff device and can't read records.");
+    const res = await this.call({ action: "pull" }, 60000);
+    let added = 0, updated = 0;
+    // roster first, so incoming records attach to the right person
+    (res.employees || []).forEach(e => this.reconcileEmployee(e));
+    if ((res.employees || []).length) dropDemoStaff();
+    (res.records || []).forEach(r => {
+      if (!r.id) return;
+      const local = RECORDS.find(x => x.id === r.id);
+      const mapped = {
+        id: r.id, empId: r.empId, date: r.date,
+        inAt: r.inAt, outAt: r.outAt,
+        inGeo: null, outGeo: null,
+        inPhoto: null, outPhoto: null,
+        inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: r.outPhotoUrl || "",
+        // Remember where the photos already live in Drive. Without this a
+        // re-upload thinks they were never sent and tries to push every image
+        // again — which is what turned "recompute the numbers" into a slow,
+        // failure-prone upload of the whole photo library.
+        inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: driveIdFrom(r.outPhotoUrl),
+        inNote: r.inNote || "", outNote: "",
+        restOverride: r.restOverride || null, otApproved: !!r.otApproved,
+        otBlock: !!r.otBlock, shiftOverride: r.shiftOverride || null, autoClosed: !!r.autoClosed,
+        edited: r.edited, remote: true, device: r.device || "", createdAt: r.inAt
+      };
+      if (!local) {
+        // employee may not exist on this device — keep a readable name
+        if (r.empId && !empById(r.empId) && r.empName) {
+          this.reconcileEmployee({ id: r.empId, name: r.empName, role: "", rate: 0, pin: "", active: true });
+        }
+        RECORDS.push(mapped); added++;
+      } else {
+        // the Sheet is the master copy of the photos — record where they are
+        if (r.inPhotoUrl && !local.inPhotoDriveId) { local.inPhotoUrl = r.inPhotoUrl; local.inPhotoDriveId = driveIdFrom(r.inPhotoUrl); }
+        if (r.outPhotoUrl && !local.outPhotoDriveId) { local.outPhotoUrl = r.outPhotoUrl; local.outPhotoDriveId = driveIdFrom(r.outPhotoUrl); }
+        if (!local.outAt && r.outAt) { local.outAt = r.outAt; updated++; }
+      }
+    });
+    persistRec(); persistEmp();
+    this.lastSync = Date.now(); localStorage.setItem("att.lastSync", this.lastSync);
+    // We have just seen the Sheet's own version of every record, so anything
+    // still showing as open really is open. This is the only moment it's safe
+    // to close a forgotten shift.
+    this.lastPull = Date.now();
+    const closed = autoCloseStale();
+    this.status = "ok"; paintSyncBadges();
+    return { added, updated, total: (res.records || []).length, closed };
+  }
+};
+
+/** Small coloured pill shown on the kiosk and in the admin bar. */
+function paintSyncBadges() {
+  const n = Sync.outbox().length;
+  let cls = "out", txt = "Local only";
+  if (Sync.on) {
+    if (Sync.status === "sending") { cls = "warnp"; txt = "Syncing…"; }
+    else if (Sync.status === "error") { cls = "dangerp"; txt = "Sync error"; }
+    else if (n > 0) { cls = "warnp"; txt = n + " waiting"; }
+    else { cls = "in"; txt = "Synced"; }
+  }
+  $$(".syncBadge").forEach(el => { el.className = "pill syncBadge " + cls; el.textContent = txt; el.title = Sync.lastError || (Sync.lastSync ? "Last sync " + fmtTime(Sync.lastSync) : ""); });
+}
+
+window.addEventListener("online", () => Sync.flush(true));
+setInterval(() => { if (Sync.on && Sync.outbox().length) Sync.flush(true); }, 60000);
+
+/* ------------------------- payroll engine ------------------------- */
+/** Look up a date in the holiday calendar. */
+function holidayOn(dateKey, st) {
+  if (!st.holidayPremiums) return null;
+  const h = (st.holidays || []).find(x => x.date === dateKey);
+  return h && h.type !== "working" ? h : null;
+}
+/* ---------------- weekly schedule ----------------
+ * weekSchedule[0..6] = Sun..Sat. Each slot is either "" (day off) or a shift
+ * written as "HH:MM-HH:MM" — a start AND an end. The end is what makes pay
+ * work: it tells us the shift is 8 hours for a cook, 7 for Allen, 5 for a
+ * part-timer, so nobody is paid by whatever the clock happened to catch.
+ *
+ * Slots saved by older versions held only a start ("07:30"). Those are read as
+ * start + the shop's standard day so nothing breaks, but they're flagged in the
+ * Employees tab until a real end time is entered.
+ */
+const SLOT_RE = /^(\d{1,2}:\d{2})\s*[-–]\s*(\d{1,2}:\d{2})$/;
+const hhmmToMin = s => { const p = String(s || "").split(":"); return (Number(p[0]) || 0) * 60 + (Number(p[1]) || 0); };
+const minToHhmm = m => { m = ((m % 1440) + 1440) % 1440; return String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0"); };
+
+/** "07:30-15:30" → {start,end,startMin,endMin,hours,legacy}. "" → null. */
+function parseSlot(slot, st) {
+  const s = String(slot || "").trim();
+  if (!s) return null;
+  const m = SLOT_RE.exec(s);
+  let start, end, legacy = false;
+  if (m) { start = m[1]; end = m[2]; }
+  else if (/^\d{1,2}:\d{2}$/.test(s)) {          // legacy start-only slot
+    start = s; legacy = true;
+    end = minToHhmm(hhmmToMin(s) + Math.round(((st && st.standardHours) || 8) * 60));
+  } else return null;
+  const startMin = hhmmToMin(start);
+  let endMin = hhmmToMin(end);
+  if (endMin <= startMin) endMin += 1440;        // shift runs past midnight
+  return { start, end, startMin, endMin, hours: (endMin - startMin) / 60, legacy };
+}
+const fmtSlot = slot => { const p = parseSlot(slot, SETTINGS); return p ? p.start + "–" + p.end : "day off"; };
+
+/**
+ * An employee's rostered shift for a given date.
+ * @returns {off, slot, start, end, hours, legacy}
+ */
+function scheduleFor(emp, dateKey, st) {
+  st = st || SETTINGS;
+  const ws = emp && emp.weekSchedule;
+  const raw = (ws && ws.length) ? (ws[parseKey(dateKey).getDay()] || "")
+    : (emp && emp.shiftStart ? emp.shiftStart : "");
+  const p = parseSlot(raw, st);
+  if (!p) return { off: true, slot: "", start: "", end: "", hours: 0, legacy: false };
+  return { off: false, slot: raw, start: p.start, end: p.end, hours: p.hours, legacy: p.legacy };
+}
+/** Is this date one of the employee's days off? */
+function isRestDay(dateKey, emp) {
+  if (emp && emp.weekSchedule && emp.weekSchedule.length) return scheduleFor(emp, dateKey).off;
+  const rd = emp && emp.restDays;               // legacy fallback for older employee records
+  if (!rd || !rd.length) return false;
+  return rd.indexOf(parseKey(dateKey).getDay()) !== -1;
+}
+
+/* ---------------- shift matching (swap detection) ----------------
+ * A rotating roster means people trade shifts constantly and nobody writes it
+ * down. If we judged Kristein's 1:48 PM Saturday clock-in against the 7:30 AM
+ * her roster says, the app would call her 374 minutes late — she wasn't late,
+ * she took the closing shift.
+ *
+ * So: gather every distinct shift the shop actually runs, and snap the clock-in
+ * to the nearest one. Her own rostered shift wins unless it is badly out (2h+)
+ * AND another shift is a clean fit (within 45 min) — which keeps a genuinely
+ * late opener from being quietly re-labelled as a late-shift worker.
+ */
+const SWAP_OWN_GAP_MIN = 120;   // own shift must be off by at least this much...
+const SWAP_MATCH_MIN = 45;      // ...and another must fit this closely, to call it a swap
+
+/** Every distinct shift in the roster, as parsed slots. */
+function rosterShifts(employees, st) {
+  const seen = {}, out = [];
+  (employees || []).forEach(e => {
+    (e.weekSchedule || []).forEach(slot => {
+      const p = parseSlot(slot, st);
+      if (p && !seen[p.startMin + "-" + p.endMin]) { seen[p.startMin + "-" + p.endMin] = 1; out.push(p); }
+    });
+  });
+  return out;
+}
+/** Absolute minutes between a clock-in and a shift start, ignoring which day it is. */
+function gapToStart(inAt, startMin) {
+  const d = new Date(inAt);
+  const mins = d.getHours() * 60 + d.getMinutes();
+  let diff = Math.abs(mins - startMin % 1440);
+  return Math.min(diff, 1440 - diff);           // 23:50 vs 00:10 is 20 min apart, not 1420
+}
+/**
+ * Which shift did this record actually work?
+ * @returns {off, start, end, hours, swapped, matched, legacy}
+ */
+function shiftForRecord(rec, emp, st, employees) {
+  st = st || SETTINGS;
+  // a manual choice in Records → Edit always wins
+  if (rec.shiftOverride === "none") return { off: true, start: "", end: "", hours: 0, swapped: false, matched: false, legacy: false };
+  if (rec.shiftOverride) {
+    const p = parseSlot(rec.shiftOverride, st);
+    if (p) return { off: false, start: p.start, end: p.end, hours: p.hours, swapped: false, matched: true, legacy: false };
+  }
+  const own = scheduleFor(emp, rec.date, st);
+  // Someone with no roster at all isn't swapping anything — they have no shift to
+  // swap away from. Leave them on the pay-the-clock fallback rather than guessing
+  // them into a shift they were never assigned.
+  const rostered = ((emp && emp.weekSchedule) || []).some(s => !!parseSlot(s, st));
+  if (!st.detectSwaps || !rec.inAt || !rostered) return Object.assign({ swapped: false, matched: !own.off }, own);
+
+  const pool = rosterShifts(employees || EMPLOYEES, st);
+  if (!pool.length) return Object.assign({ swapped: false, matched: !own.off }, own);
+
+  let best = null, bestGap = Infinity;
+  pool.forEach(p => { const g = gapToStart(rec.inAt, p.startMin); if (g < bestGap) { bestGap = g; best = p; } });
+
+  const ownGap = own.off ? Infinity : gapToStart(rec.inAt, hhmmToMin(own.start));
+  const takeBest = best && bestGap <= SWAP_MATCH_MIN && ownGap >= SWAP_OWN_GAP_MIN;
+  if (!takeBest) return Object.assign({ swapped: false, matched: !own.off }, own);
+  return { off: false, start: best.start, end: best.end, hours: best.hours, swapped: true, matched: true, legacy: false };
+}
+/** The real clock time of a shift boundary, anchored to the day the person clocked in. */
+function anchorMs(inAt, minOfDay) {
+  const d = new Date(inAt);
+  let t = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime() + minOfDay * 60000;
+  if (inAt - t < -12 * 3600000) t -= 86400000;   // clocked in just before midnight for a shift dated tomorrow
+  if (inAt - t > 12 * 3600000) t += 86400000;
+  return t;
+}
+/**
+ * Premium multipliers against the plain hourly rate — 3:45 Coffee House policy.
+ *
+ *   Ordinary day            100%   OT at the shop's OT multiplier
+ *   Rest day                100%   worked rest days are paid at plain rate
+ *   Special non-working     130%   OT also 130% (no extra 30%)
+ *   Regular holiday         100%   this shop pays no regular-holiday premium
+ *
+ * A holiday landing on someone's rest day adds nothing on top either way.
+ * Both multipliers are editable in Settings, because these are the shop's own
+ * rates and they sit below the Labor Code figures — see the note there.
+ *
+ * Unworked holidays pay nothing — the shop is "no work, no pay".
+ * `rest` is still passed in because it drives the day label and flags.
+ */
+function dayRates(holiday, rest, st) {
+  const ordinaryOt = st.otMultiplier || 1;
+  const type = holiday ? holiday.type : "";
+  let reg = 1.0;                                   // ordinary day and plain rest day alike
+  if (type === "regular") reg = Number(st.regularHolidayMult ?? 1.0);
+  else if (type === "special") reg = Number(st.specialHolidayMult ?? 1.3);
+  if (!(reg > 0)) reg = 1.0;
+  return { reg: reg, ot: reg === 1.0 ? ordinaryOt : reg };
+}
+function dayLabel(holiday, rest) {
+  if (holiday && holiday.type === "regular") return rest ? "Regular holiday + rest day" : "Regular holiday";
+  if (holiday && holiday.type === "special") return rest ? "Special day + rest day" : "Special non-working";
+  if (rest) return "Rest day";
+  return "Ordinary day";
+}
+
+/**
+ * Compute one shift.
+ *
+ * PAY IS BASED ON THE ROSTERED SHIFT, NOT ON WHATEVER THE CLOCK CAUGHT.
+ * Someone rostered 7:30–15:30 is paid 8 hours. Clocking in six minutes early
+ * earns nothing extra; clocking out three minutes late earns nothing extra.
+ * What the clock is for is catching the exceptions:
+ *
+ *   late minutes       arrived after the shift start  → deducted per minute
+ *   undertime minutes  left before the shift end      → deducted per minute
+ *   overtime           stayed past the shift end      → paid only once approved
+ *
+ * This is how the shop already computes payroll by hand, and it's the only way
+ * a 7-hour shift and a 5-hour shift can sit in the same roster without the app
+ * guessing. If someone has no rostered shift at all we fall back to paying the
+ * clock, capped at the standard day — the old behaviour.
+ *
+ * @returns {worked, paid, regular, ot, gross, base, premium, lateMin, underMin, flags[]}
+ */
+function computeShift(rec, emp, st, employees) {
+  const out = {
+    worked: 0, paid: 0, scheduled: 0, regular: 0, ot: 0, gross: 0, base: 0, premium: 0,
+    lateMin: 0, underMin: 0, deduction: 0, breakDeducted: 0,
+    dayType: "Ordinary day", mult: 1, shift: "", flags: []
+  };
+  if (!rec.inAt) { out.flags.push("no-in"); return out; }
+  if (!rec.outAt) { out.flags.push("open"); return out; }
+
+  let ms = rec.outAt - rec.inAt;
+  if (ms < 0) { out.flags.push("invalid"); return out; }
+
+  const std = st.standardHours || 8;
+  const step = Math.max(1, st.roundToMinutes || 1) / 60;
+  const rate = Number((emp && emp.rate) || 0);
+  const grace = Math.max(0, st.gracePeriodMin || 0);
+
+  // A shift longer than the daily maximum is a forgotten clock-out, not a marathon.
+  // Refuse to pay it and shout, rather than quietly settling on the standard day.
+  const tooLong = ms / 3600000 > (st.maxShiftHours || 16);
+  if (tooLong) out.flags.push("too-long");
+
+  // unpaid break
+  let worked = ms / 3600000;
+  let br = 0;
+  if (st.breakMinutes > 0 && worked >= (st.breakAfterHours || 5)) {
+    br = st.breakMinutes / 60;
+    worked = Math.max(0, worked - br);
+  }
+  out.breakDeducted = br;
+  out.worked = Math.round(worked / step) * step;   // real time on the clock, for the record
+
+  // day type → premium multipliers.
+  // rec.restOverride lets you settle shift swaps and cover shifts by hand:
+  //   "rest"     → treat as their day off even though the roster says it's a work day
+  //   "ordinary" → treat as a normal work day, e.g. the rest day was formally swapped
+  // Under this shop's policy rest days pay the plain rate, so the override changes the
+  // label and the late check rather than the money — it's there to record the decision.
+  const hol = holidayOn(rec.date, st);
+  const auto = isRestDay(rec.date, emp);
+  const rest = rec.restOverride === "rest" ? true : rec.restOverride === "ordinary" ? false : auto;
+  const mult = dayRates(hol, rest, st);
+
+  const sched = shiftForRecord(rec, emp, st, employees);
+  out.shift = sched.off ? "" : sched.start + "–" + sched.end;
+
+  let regular = 0, ot = 0;
+
+  if (rec.otBlock) {
+    // A separate block clocked after the day's rostered shift already ended —
+    // someone clocked out, then came back in. All of it is overtime, and none of
+    // it is paid until you approve it.
+    ot = rec.otApproved ? out.worked : 0;
+    out.flags.push("ot-block");
+    if (!rec.otApproved) out.flags.push("ot-pending");
+
+  } else if (tooLong) {
+    // Nothing trustworthy to pay against. Left at zero and flagged so it gets fixed.
+    out.flags.push("needs-fix");
+
+  } else if (!sched.off && sched.hours > 0) {
+    const startMs = anchorMs(rec.inAt, hhmmToMin(sched.start));
+    const endMs = startMs + sched.hours * 3600000;
+    out.scheduled = sched.hours;
+
+    const lateMs = rec.inAt - startMs - grace * 60000;
+    if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
+
+    if (st.deductUndertime !== false) {
+      const underMs = endMs - rec.outAt - grace * 60000;
+      if (underMs > 0) { out.underMin = Math.round(underMs / 60000); out.flags.push("undertime"); }
+    }
+
+    regular = Math.max(0, sched.hours - (out.lateMin + out.underMin) / 60);
+    // Overtime only counts once the overrun is real. Wiping down and cashing up
+    // runs a few minutes past close most nights; treating that as pending overtime
+    // would put an OT? flag on nearly every row and bury the ones that matter.
+    const overMin = (rec.outAt - endMs) / 60000;
+    if (overMin >= (st.otMinMinutes ?? 15)) {
+      const overHrs = Math.round((overMin / 60) / step) * step;
+      if (rec.otApproved) ot = overHrs;
+      else out.flags.push("ot-pending");
+    }
+    if (sched.swapped) out.flags.push("swap");
+    if (sched.legacy) out.flags.push("no-end-time");
+
+  } else {
+    // No rostered shift for this day (or the roster is empty). Pay the clock,
+    // capped at the standard day, exactly as the app used to.
+    regular = Math.min(out.worked, std);
+    ot = rec.otApproved ? Math.max(0, out.worked - std) : 0;
+    if (!rec.otApproved && out.worked > std) out.flags.push("ot-pending");
+    out.scheduled = regular;
+    out.flags.push("no-schedule");
+  }
+
+  out.regular = regular;
+  out.ot = ot;
+  out.paid = regular + ot;
+  out.deduction = (out.lateMin + out.underMin) / 60 * rate * mult.reg;
+  out.dayType = dayLabel(hol, rest);
+  out.holidayName = hol ? hol.name : "";
+  out.mult = mult.reg;
+  out.base = regular * rate + ot * rate * (st.otMultiplier || 1);
+  out.gross = regular * rate * mult.reg + ot * rate * mult.ot;
+  out.premium = out.gross - out.base;
+
+  if (ot > 0) out.flags.push("ot");
+  if (hol) out.flags.push("holiday");
+  if (rest) out.flags.push("restday");
+  if (rec.restOverride) out.flags.push("override");
+  if (rec.autoClosed) out.flags.push("auto-closed");
+  // worked a day the roster says they're off, and it hasn't been settled either way
+  if (auto && !rec.restOverride && !rec.otBlock) out.flags.push("unscheduled");
+  return out;
+}
+
+function money(n) {
+  const v = Number(n || 0);
+  return SETTINGS.currency + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+const empById = id => EMPLOYEES.find(e => e.id === id);
+
+/* ------------------------- pay periods ------------------------- */
+function periodsFor(year, month) { // month 0-11
+  const last = new Date(year, month + 1, 0).getDate();
+  if (SETTINGS.payPeriod === "monthly") return [{ from: `${year}-${pad(month + 1)}-01`, to: `${year}-${pad(month + 1)}-${pad(last)}`, label: "Full month" }];
+  if (SETTINGS.payPeriod === "semi") return [
+    { from: `${year}-${pad(month + 1)}-01`, to: `${year}-${pad(month + 1)}-15`, label: "1st half (1–15)" },
+    { from: `${year}-${pad(month + 1)}-16`, to: `${year}-${pad(month + 1)}-${pad(last)}`, label: `2nd half (16–${last})` },
+  ];
+  // weekly: build Mon–Sun ranges that intersect the month
+  const res = []; let d = new Date(year, month, 1);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back to Monday
+  while (d <= new Date(year, month + 1, 0)) {
+    const s = new Date(d), e = new Date(d); e.setDate(e.getDate() + 6);
+    res.push({ from: dayKey(s), to: dayKey(e), label: `Week of ${fmtDateShort(dayKey(s))}` });
+    d.setDate(d.getDate() + 7);
+  }
+  return res;
+}
+
+/* =====================================================================
+   THEME + CLOCK
+   ===================================================================== */
+function applyTheme() {
+  document.documentElement.style.setProperty("--accent", SETTINGS.accent);
+  document.documentElement.style.setProperty("--accent-dark", shade(SETTINGS.accent, -18));
+  document.documentElement.style.setProperty("--accent-soft", shade(SETTINGS.accent, 88));
+  $("#orgName").textContent = SETTINGS.orgName;
+  $("#orgSub").textContent = SETTINGS.tagline;
+  $("#adminOrg").textContent = SETTINGS.orgName + " · Admin";
+  document.title = SETTINGS.orgName + " — Attendance";
+}
+function shade(hex, pct) {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map(c => c + c).join("") : h, 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const t = pct < 0 ? 0 : 255, p = Math.abs(pct) / 100;
+  r = Math.round((t - r) * p + r); g = Math.round((t - g) * p + g); b = Math.round((t - b) * p + b);
+  return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+setInterval(() => {
+  const now = new Date();
+  const c = $("#bigClock"); if (c) c.textContent = fmtTime(now.getTime());
+  const d = $("#bigDate"); if (d) d.textContent = fmtDateLong(now);
+  const a = $("#adminClock"); if (a) a.textContent = fmtTime(now.getTime());
+}, 1000);
+
+/* =====================================================================
+   KIOSK FLOW
+   ===================================================================== */
+const K = { emp: null, action: null, photo: null, geo: null, geoErr: null, stream: null, countdown: null };
+
+function showScreen(id) {
+  $$(".scr").forEach(s => s.classList.add("hide"));
+  $("#" + id).classList.remove("hide");
+  window.scrollTo({ top: 0, behavior: "instant" });
+}
+
+const initials = n => n.trim().split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+
+/** Latest open record (timed in, not yet out) for an employee. */
+/**
+ * The shift this person is currently inside.
+ *
+ * Crucially this ignores anything older than the daily maximum. Without that,
+ * a clock-in someone forgot to close stays "open" for ever, and the next time
+ * they tap Time In the app closes the stale shift instead — which is how one
+ * record came to span 25 August to 27 August and swallow a whole day's work.
+ * An abandoned shift is abandoned; the next tap starts something new.
+ */
+function openRecord(empId) {
+  const cutoff = Date.now() - (SETTINGS.maxShiftHours || 16) * 3600000;
+  return RECORDS.filter(r => r.empId === empId && r.inAt && !r.outAt && r.inAt >= cutoff)
+    .sort((a, b) => b.inAt - a.inAt)[0] || null;
+}
+/** Open shifts old enough that they were plainly never clocked out. */
+function staleOpenRecords(now) {
+  now = now || Date.now();
+  const hardCutoff = now - (SETTINGS.maxShiftHours || 16) * 3600000;
+  return RECORDS.filter(r => {
+    if (!r.inAt || r.outAt) return false;
+    if (r.inAt < hardCutoff) return true;
+    const sched = shiftForRecord(r, empById(r.empId), SETTINGS, EMPLOYEES);
+    if (sched.off || !sched.hours) return false;
+    const endMs = anchorMs(r.inAt, hhmmToMin(sched.start)) + sched.hours * 3600000;
+    return now > endMs + Math.max(0, SETTINGS.autoCloseHours || 2) * 3600000;
+  });
+}
+/**
+ * Close forgotten shifts at their rostered end time and flag them.
+ *
+ * Left alone these are worth ₱0 (an open shift pays nothing) or, worse, get
+ * closed days later by an unrelated tap. Closing them at the scheduled end
+ * gets the money approximately right immediately and leaves a loud AUTO-CLOSED
+ * marker so the real time can be entered. Admin devices only — otherwise seven
+ * phones would each write their own version of the same correction.
+ */
+function autoCloseStale() {
+  if (!isTrulyAdminDevice()) return 0;
+  // NEVER close a shift on the strength of a stale local copy.
+  //
+  // The staff clock out on their own phones. Until those taps reach this laptop
+  // the shift only *looks* open here, and closing it would overwrite a perfectly
+  // good record with a guess — which is exactly what happened on 29 August, when
+  // six people were marked AUTO-CLOSED despite having tapped out properly.
+  //
+  // So: only ever act on a view of the data that is known to be current. If sync
+  // is on, that means a successful pull within the last few minutes.
+  if (Sync.on && !(Sync.lastPull && Date.now() - Sync.lastPull < 5 * 60000)) return 0;
+  const list = staleOpenRecords();
+  if (!list.length) return 0;
+  list.forEach(r => {
+    const sched = shiftForRecord(r, empById(r.empId), SETTINGS, EMPLOYEES);
+    const endMs = (!sched.off && sched.hours)
+      ? anchorMs(r.inAt, hhmmToMin(sched.start)) + sched.hours * 3600000
+      : r.inAt + (SETTINGS.standardHours || 8) * 3600000;
+    r.outAt = Math.max(r.inAt, endMs);
+    r.autoClosed = true;
+    r.outNote = (r.outNote ? r.outNote + " · " : "") + "Auto-closed — no time out recorded";
+    Sync.queue(r.id);
+  });
+  persistRec();
+  Sync.flush(true);
+  return list.length;
+}
+
+function renderEmpList() {
+  const q = ($("#empSearch").value || "").toLowerCase().trim();
+  const list = EMPLOYEES.filter(e => e.active !== false)
+    .filter(e => !q || e.name.toLowerCase().includes(q) || (e.role || "").toLowerCase().includes(q))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const el = $("#empList");
+  if (!list.length) {
+    el.innerHTML = q
+      ? `<div class="empty">Nobody matches “${esc(q)}”.</div>`
+      : Sync.on
+        ? `<div class="empty">Waiting for the staff list…<br><span class="tiny">If this doesn't fill in, ask May to open Settings and press <strong>⟳ Sync</strong>.</span>
+             <div style="margin-top:14px"><button class="btn sm" id="retryRoster">Try again</button></div></div>`
+        : `<div class="empty">No employees yet. Add them from the Admin dashboard.</div>`;
+    const retry = $("#retryRoster", el);
+    if (retry) retry.onclick = async () => {
+      retry.disabled = true; retry.textContent = "Checking…";
+      const r = await Sync.kioskRefresh(true);
+      if (r && r.error) { toast("Couldn't reach the staff list: " + r.error, 5000); retry.disabled = false; retry.textContent = "Try again"; }
+      else renderEmpList();
+    };
+    return;
+  }
+  el.innerHTML = list.map(e => {
+    const open = openRecord(e.id);
+    return `<button class="emp" data-id="${e.id}">
+      <span class="avatar">${esc(initials(e.name))}</span>
+      <span class="grow">
+        <span class="nm" style="display:block">${esc(e.name)}</span>
+        <span class="small muted">${esc(e.role || "Staff")}</span>
+      </span>
+      <span class="pill ${open ? "in" : "out"}">${open ? "IN since " + fmtTime(open.inAt) : "OUT"}</span>
+    </button>`;
+  }).join("");
+  $$(".emp", el).forEach(b => b.onclick = () => selectEmp(b.dataset.id));
+}
+
+function selectEmp(id) {
+  const e = empById(id); if (!e) return;
+  K.emp = e; K.photo = null; K.geo = null; K.geoErr = null;
+  $("#aAvatar").textContent = initials(e.name);
+  $("#aName").textContent = e.name;
+  $("#aRole").textContent = e.role || "Staff";
+  const open = openRecord(e.id);
+  const today = RECORDS.filter(r => r.empId === e.id && r.date === todayKey());
+  const doneToday = today.filter(r => r.outAt).length;
+  // an abandoned shift no longer blocks Time In, but they should be told about it
+  const stale = !open && RECORDS.some(r => r.empId === e.id && r.inAt && !r.outAt);
+  const nextIsOt = !open && doneToday > 0;
+  $("#aStatus").innerHTML = (open
+    ? `<div class="strip ok"><span class="dot blink"></span>Timed in at <strong>${fmtTime(open.inAt)}</strong> — ${hm((Date.now() - open.inAt) / 3600000)} elapsed</div>`
+    : `<div class="strip wait"><span class="dot"></span>Not timed in${doneToday ? ` · ${doneToday} completed shift${doneToday > 1 ? "s" : ""} today` : ""}</div>`)
+    + (stale ? `<div class="strip warn" style="margin-top:8px"><span class="dot"></span>You have an earlier shift with no time out. Tell your manager so it can be fixed — you can still time in below.</div>` : "")
+    + (nextIsOt ? `<div class="strip warn" style="margin-top:8px"><span class="dot"></span>You already finished a shift today, so this will be logged as <strong>overtime</strong> and needs approval.</div>` : "");
+  $("#btnIn").disabled = !!open;
+  $("#btnOut").disabled = !open;
+  $("#btnIn").classList.toggle("primary", !open);
+  $("#btnOut").classList.toggle("primary", !!open);
+  showScreen("s-action");
+}
+
+function startAction(action) {
+  K.action = action;
+  if (SETTINGS.requirePin && K.emp.pin) { openPin(); return; }
+  goPhoto();
+}
+
+/* ---------- PIN ---------- */
+let pinBuf = "";
+function openPin() {
+  pinBuf = "";
+  $("#pinWho").textContent = K.emp.name;
+  drawPin();
+  $("#pinPad").innerHTML = [1,2,3,4,5,6,7,8,9].map(n => `<button data-k="${n}">${n}</button>`).join("")
+    + `<button data-k="c">✕</button><button data-k="0">0</button><button data-k="b">⌫</button>`;
+  $$("#pinPad button").forEach(b => b.onclick = () => {
+    const k = b.dataset.k;
+    if (k === "c") pinBuf = "";
+    else if (k === "b") pinBuf = pinBuf.slice(0, -1);
+    else if (pinBuf.length < 4) pinBuf += k;
+    drawPin();
+    if (pinBuf.length === 4) {
+      if (pinBuf === String(K.emp.pin)) { setTimeout(goPhoto, 140); }
+      else { toast("Wrong PIN — try again"); pinBuf = ""; setTimeout(drawPin, 160); }
+    }
+  });
+  showScreen("s-pin");
+}
+function drawPin() {
+  $("#pinDots").innerHTML = [0,1,2,3].map(i => `<i class="${i < pinBuf.length ? "f" : ""}"></i>`).join("");
+}
+
+/* ---------- camera ---------- */
+async function goPhoto() {
+  $("#pAction").textContent = K.action === "in" ? "TIME IN" : "TIME OUT";
+  $("#pAction").className = "pill " + (K.action === "in" ? "in" : "warnp");
+  $("#pTitle").textContent = K.action === "in" ? "Take your time-in photo" : "Take your time-out photo";
+  showScreen("s-photo");
+  requestGeo();
+  if (!SETTINGS.requirePhoto) { $("#shutter").classList.add("hide"); }
+  await startCam();
+}
+
+async function startCam() {
+  const shell = $("#camShell"), v = $("#video"), msg = $("#camMsg");
+  stopCam();
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return camFallback("Camera API not available on this browser.");
+  try {
+    K.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user", width: { ideal: 720 }, height: { ideal: 960 } }, audio: false
+    });
+    v.srcObject = K.stream; v.classList.remove("hide"); msg.classList.add("hide");
+    $("#btnFileCam").classList.add("hide"); $("#shutter").classList.remove("hide");
+  } catch (e) {
+    camFallback(e.name === "NotAllowedError"
+      ? "Camera permission denied. Allow camera access in your browser, or use the button below."
+      : "Couldn't open the camera (" + e.name + "). Use the button below instead.");
+  }
+}
+function camFallback(text) {
+  $("#video").classList.add("hide");
+  const m = $("#camMsg"); m.textContent = text; m.classList.remove("hide");
+  $("#shutter").classList.add("hide");
+  $("#btnFileCam").classList.remove("hide");
+}
+function stopCam() {
+  if (K.stream) { K.stream.getTracks().forEach(t => t.stop()); K.stream = null; }
+  $("#video").srcObject = null;
+}
+
+/** Draw video frame to a small square JPEG (~20–35 KB). */
+function grabFrame() {
+  const v = $("#video");
+  const size = 420;
+  const c = document.createElement("canvas"); c.width = size; c.height = size;
+  const ctx = c.getContext("2d");
+  const vw = v.videoWidth, vh = v.videoHeight;
+  if (!vw || !vh) return null;
+  const s = Math.min(vw, vh);
+  ctx.translate(size, 0); ctx.scale(-1, 1); // un-mirror
+  ctx.drawImage(v, (vw - s) / 2, (vh - s) / 2, s, s, 0, 0, size, size);
+  return c.toDataURL("image/jpeg", 0.62);
+}
+function shrinkFile(file) {
+  return new Promise(res => {
+    const fr = new FileReader();
+    fr.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const size = 420, c = document.createElement("canvas");
+        c.width = size; c.height = size;
+        const s = Math.min(img.width, img.height);
+        c.getContext("2d").drawImage(img, (img.width - s) / 2, (img.height - s) / 2, s, s, 0, 0, size, size);
+        res(c.toDataURL("image/jpeg", 0.62));
+      };
+      img.onerror = () => res(null);
+      img.src = fr.result;
+    };
+    fr.onerror = () => res(null);
+    fr.readAsDataURL(file);
+  });
+}
+
+/* ---------- geolocation ---------- */
+function setGeoStrip(cls, html) { $("#geoStrip").innerHTML = `<div class="strip ${cls}"><span class="dot ${cls === "wait" ? "blink" : ""}"></span><span>${html}</span></div>`; }
+function requestGeo() {
+  K.geo = null; K.geoErr = null;
+  if (!SETTINGS.requireLocation) { $("#geoStrip").innerHTML = ""; return; }
+  if (!navigator.geolocation) { K.geoErr = "Not supported"; setGeoStrip("err", "Location not supported on this device"); return; }
+  setGeoStrip("wait", "Getting your location…");
+  navigator.geolocation.getCurrentPosition(
+    p => {
+      K.geo = { lat: +p.coords.latitude.toFixed(6), lng: +p.coords.longitude.toFixed(6), acc: Math.round(p.coords.accuracy) };
+      let extra = "";
+      if (SETTINGS.shopLat && SETTINGS.shopLng) {
+        const d = distMeters(K.geo.lat, K.geo.lng, +SETTINGS.shopLat, +SETTINGS.shopLng);
+        K.geo.dist = Math.round(d);
+        extra = ` · ${d < 1000 ? Math.round(d) + " m" : (d / 1000).toFixed(1) + " km"} from shop`;
+      }
+      setGeoStrip("ok", `Location captured (±${K.geo.acc} m)${extra}`);
+    },
+    err => {
+      K.geoErr = err.code === 1 ? "Permission denied" : err.code === 3 ? "Timed out" : "Unavailable";
+      setGeoStrip("err", `Location ${K.geoErr.toLowerCase()}${SETTINGS.requireLocation ? " — clock-in blocked. Allow location access and try again." : " — entry will be saved without coordinates"}`);
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 30000 }
+  );
+}
+function distMeters(la1, lo1, la2, lo2) {
+  const R = 6371000, r = Math.PI / 180;
+  const dLa = (la2 - la1) * r, dLo = (lo2 - lo1) * r;
+  const a = Math.sin(dLa / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+const mapLink = g => g && g.lat != null ? `https://www.google.com/maps?q=${g.lat},${g.lng}` : null;
+
+/* ---------- confirm + submit ---------- */
+function goConfirm() {
+  if (SETTINGS.requireLocation) {
+    if (!K.geo && !K.geoErr) {
+      alert("Still getting your location — please wait a moment and try again.");
+      return;
+    }
+    if (K.geoErr) {
+      alert("Location is required to clock in. Please allow location access on your phone and try again.");
+      return;
+    }
+  }
+  stopCam();
+  $("#shot").src = K.photo || "";
+  $("#shot").parentElement.style.display = K.photo ? "" : "none";
+  $("#cName").textContent = K.emp.name;
+  $("#cAction").innerHTML = `<span class="pill ${K.action === "in" ? "in" : "warnp"}">${K.action === "in" ? "TIME IN" : "TIME OUT"}</span>`;
+  $("#cTime").textContent = fmtTime(Date.now()) + " · " + new Date().toLocaleDateString();
+  $("#cLoc").innerHTML = K.geo
+    ? `<a href="${mapLink(K.geo)}" target="_blank" rel="noopener">${K.geo.lat}, ${K.geo.lng}</a> <span class="tiny muted">±${K.geo.acc}m</span>`
+    : `<span class="muted">${esc(K.geoErr || "Not captured")}</span>`;
+  $("#cNote").value = "";
+  showScreen("s-confirm");
+}
+
+async function submitEntry() {
+  try {
+    await doSubmitEntry();
+  } catch (err) {
+    // Whatever went wrong, the person is standing there waiting. Never leave the
+    // button stuck on "Saving…" with their shift unrecorded and no explanation.
+    console.error("submitEntry", err);
+    const btn = $("#cSubmit"); btn.disabled = false; btn.textContent = "Submit";
+    alert("Sorry — that didn't save. Please try again.\n\nIf it keeps happening, tell your manager and write down your time.\n\n(" + (err && err.message ? err.message : err) + ")");
+  }
+}
+
+async function doSubmitEntry() {
+  const btn = $("#cSubmit"); btn.disabled = true; btn.textContent = "Saving…";
+  const now = Date.now();
+  const note = $("#cNote").value.trim();
+
+  // The photo is evidence, not the record. If it can't be stored — full device,
+  // private browsing, Safari clearing site data — the shift is still recorded and
+  // the person is told the photo is missing, rather than the app pretending it
+  // saved one and quietly uploading nothing.
+  let photoId = null, photoFailed = false;
+  if (K.photo) {
+    const id = uid();
+    let ok = false;
+    try { ok = await PhotoDB.put(id, K.photo); } catch (e) { console.warn("photo save failed", e); }
+    if (ok) photoId = id; else photoFailed = true;
+  }
+
+  let rec, summaryHtml = "";
+  if (K.action === "in") {
+    // Already completed a shift today? Then this is a second block — someone
+    // clocked out and came back. It's overtime, kept as its own record so the
+    // rostered shift stays clean, and it pays nothing until it's approved.
+    const otBlock = RECORDS.some(r => r.empId === K.emp.id && r.date === todayKey() && r.inAt && r.outAt);
+    rec = {
+      id: uid(), empId: K.emp.id, date: todayKey(),
+      inAt: now, outAt: null,
+      inPhoto: photoId, outPhoto: null,
+      inGeo: K.geo, outGeo: null,
+      inNote: note, outNote: "",
+      otBlock: otBlock, otApproved: false,
+      edited: false, createdAt: now
+    };
+    RECORDS.push(rec);
+    summaryHtml = `<div class="kv"><span class="k">Timed in</span><span class="v">${fmtTime(now)}</span></div>`
+      + (otBlock ? `<div class="kv"><span class="k">Logged as</span><span class="v">Overtime · needs approval</span></div>` : "");
+  } else {
+    rec = openRecord(K.emp.id);
+    if (!rec) { toast("No open time-in found."); btn.disabled = false; btn.textContent = "Submit"; return; }
+    rec.outAt = now; rec.outPhoto = photoId; rec.outGeo = K.geo; rec.outNote = note;
+    const c = computeShift(rec, K.emp, SETTINGS);
+    summaryHtml =
+      `<div class="kv"><span class="k">Timed in</span><span class="v">${fmtTime(rec.inAt)}</span></div>
+       <div class="kv"><span class="k">Timed out</span><span class="v">${fmtTime(now)}</span></div>
+       <div class="kv"><span class="k">Hours worked</span><span class="v">${hm(c.worked)}${c.breakDeducted ? ` <span class="tiny muted">(−${Math.round(c.breakDeducted * 60)}m break)</span>` : ""}</span></div>
+       ${c.ot > 0 ? `<div class="kv"><span class="k">Overtime</span><span class="v">${hm(c.ot)}</span></div>` : ""}
+       ${isAdminDevice() && Number(K.emp?.rate || 0) > 0
+        ? `<div class="kv"><span class="k">Est. pay this shift</span><span class="v">${money(c.gross)}</span></div>`
+        : ""}`;
+  // Staff devices never receive pay rates, so no peso figure is shown on the
+  // kiosk — which also keeps wages off a screen other people are standing near.
+  }
+  const stored = persistRec();
+  Sync.queue(rec.id);
+  Sync.flush(true);   // fire and forget — the outbox retries if it fails
+
+  // Two things can still have gone wrong, and both must be said out loud rather
+  // than left for someone to discover on payday.
+  const warnings = [];
+  if (photoFailed) warnings.push("Your photo couldn't be saved — this device is out of space. The time is recorded; tell your manager about the photo.");
+  if (!stored) warnings.push(Sync.on
+    ? "This device is out of space, so the entry was sent straight to the office instead of being kept here. Your time is recorded — please tell your manager."
+    : "⚠️ This device is out of space and the entry could NOT be saved. Write your time down and tell your manager now.");
+
+  $("#dTitle").textContent = K.action === "in" ? "You're timed in!" : "You're timed out!";
+  $("#dSub").textContent = K.emp.name + " · " + fmtTime(now);
+  $("#dSummary").innerHTML = summaryHtml
+    + warnings.map(w => `<div class="strip ${stored ? "wait" : "err"}" style="margin-top:10px"><span class="dot"></span>${esc(w)}</div>`).join("");
+  btn.disabled = false; btn.textContent = "Submit";
+  showScreen("s-done");
+  // A warning that vanishes after eight seconds is no warning at all. Hold the
+  // screen until they tap away when something actually went wrong.
+  if (warnings.length) { clearInterval(K.countdown); $("#dCount").textContent = "—"; }
+  else startCountdown();
+}
+
+function startCountdown() {
+  let n = 8; $("#dCount").textContent = n;
+  clearInterval(K.countdown);
+  K.countdown = setInterval(() => {
+    n--; $("#dCount").textContent = n;
+    if (n <= 0) { clearInterval(K.countdown); resetKiosk(); }
+  }, 1000);
+}
+function resetKiosk() {
+  clearInterval(K.countdown); stopCam();
+  K.emp = null; K.action = null; K.photo = null; K.geo = null; K.geoErr = null;
+  $("#empSearch").value = "";
+  renderEmpList();
+  showScreen("s-pick");
+  // quietly catch up on the roster and anyone clocked in elsewhere
+  if (Sync.on) Sync.kioskRefresh(false).then(r => { if (r && !r.throttled && !r.error) renderEmpList(); });
+}
+
+/* ---------- kiosk wiring ---------- */
+$("#empSearch").oninput = renderEmpList;
+$("#aBack").onclick = resetKiosk;
+$("#btnIn").onclick = () => startAction("in");
+$("#btnOut").onclick = () => startAction("out");
+$("#pinBack").onclick = () => selectEmp(K.emp.id);
+$("#pBack").onclick = () => { stopCam(); selectEmp(K.emp.id); };
+$("#cRetake").onclick = () => goPhoto();
+$("#cSubmit").onclick = submitEntry;
+$("#dDone").onclick = resetKiosk;
+$("#shutter").onclick = () => {
+  const p = grabFrame();
+  if (!p) { toast("Camera not ready yet — wait a second and tap again."); return; }
+  K.photo = p; goConfirm();
+};
+$("#btnFileCam").onclick = () => $("#fileCam").click();
+$("#fileCam").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const p = await shrinkFile(f);
+  if (!p) { toast("Couldn't read that photo."); return; }
+  K.photo = p; goConfirm(); e.target.value = "";
+};
+document.addEventListener("visibilitychange", () => { if (document.hidden) stopCam(); });
+
+/* =====================================================================
+   MODAL
+   ===================================================================== */
+function modal({ title, body, actions = [], wide = false }) {
+  const root = $("#modalRoot");
+  const ov = document.createElement("div"); ov.className = "overlay";
+  ov.innerHTML = `<div class="modal" style="${wide ? "max-width:760px" : ""}">
+    <div class="modal-h"><h3 style="font-size:16px">${title}</h3><button class="x" data-close>&times;</button></div>
+    <div class="modal-b">${body}</div>
+    ${actions.length ? `<div class="modal-f">${actions.map((a, i) => `<button class="btn ${a.cls || ""}" data-act="${i}">${a.label}</button>`).join("")}</div>` : ""}
+  </div>`;
+  root.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector("[data-close]").onclick = close;
+  ov.onclick = e => { if (e.target === ov) close(); };
+  actions.forEach((a, i) => { ov.querySelector(`[data-act="${i}"]`).onclick = () => a.onClick ? a.onClick(ov, close) : close(); });
+  return { el: ov, close };
+}
+function confirmBox(msg, onYes, yesLabel = "Delete") {
+  modal({
+    title: "Please confirm", body: `<p style="margin:0">${msg}</p>`,
+    actions: [
+      { label: "Cancel" },
+      { label: yesLabel, cls: "danger", onClick: (el, close) => { close(); onYes(); } }
+    ]
+  });
+}
+async function lightbox(photoId, caption) {
+  const src = await PhotoDB.get(photoId);
+  if (!src) { toast("Photo not found (may have been cleared)."); return; }
+  modal({ title: caption || "Photo", body: `<div class="lightbox center"><img src="${src}" alt=""></div>` });
+}
+
+/* =====================================================================
+   ADMIN
+   ===================================================================== */
+let ADMIN_UNLOCKED = false;
+let CUR_TAB = "dash";
+
+function openAdmin() {
+  if (!ADMIN_UNLOCKED) { askAdminPin(); return; }
+  stopCam();
+  $("#kiosk").classList.add("hide");
+  $("#admin").classList.remove("hide");
+  $("#previewBanner").classList.toggle("hide", !PREVIEW_STAFF);
+  renderTab(CUR_TAB);
+  window.scrollTo(0, 0);
+}
+if ($("#exitPreview")) $("#exitPreview").onclick = () => setPreviewStaff(false);
+function askAdminPin() {
+  const m = modal({
+    title: "Admin access",
+    body: `<div class="field"><label class="f">Admin PIN</label>
+      <input id="apin" type="password" inputmode="numeric" autocomplete="off" placeholder="••••"></div>
+      <div class="note">This PIN only hides the dashboard on this device. It is not real security — anyone with the file can read the data.</div>`,
+    actions: [{ label: "Cancel" }, {
+      label: "Unlock", cls: "primary", onClick: (el, close) => {
+        if ($("#apin", el).value === String(SETTINGS.adminPin)) { ADMIN_UNLOCKED = true; close(); openAdmin(); }
+        else toast("Incorrect PIN");
+      }
+    }]
+  });
+  setTimeout(() => { const i = $("#apin", m.el); i.focus(); i.onkeydown = e => { if (e.key === "Enter") m.el.querySelector('[data-act="1"]').click(); }; }, 60);
+}
+function closeAdmin() {
+  $("#admin").classList.add("hide");
+  $("#kiosk").classList.remove("hide");
+  resetKiosk();
+}
+$("#toAdmin").onclick = e => { e.preventDefault(); openAdmin(); };
+$("#toKiosk").onclick = closeAdmin;
+$("#btnLock").onclick = () => { ADMIN_UNLOCKED = false; closeAdmin(); toast("Dashboard locked"); };
+$("#btnSyncNow").onclick = async () => {
+  if (!Sync.on) { toast("Set up Google Sheets sync in Settings first."); return; }
+  const b = $("#btnSyncNow"); b.disabled = true; b.textContent = "⟳ Syncing…";
+  try {
+    await Sync.flush(false);
+    const r = await Sync.pull();
+    toast(`Up to date — ${r.added} new, ${r.updated} completed, ${r.total} total in the Sheet`, 4000);
+    renderTab(CUR_TAB);
+  } catch (e) { toast("Sync failed: " + e.message, 5000); }
+  b.disabled = false; b.textContent = "⟳ Sync";
+};
+$$("#tabs .tab").forEach(t => t.onclick = () => {
+  $$("#tabs .tab").forEach(x => x.classList.remove("on")); t.classList.add("on");
+  renderTab(t.dataset.tab);
+});
+function renderTab(name) {
+  CUR_TAB = name;
+  $$(".tabpane").forEach(p => p.classList.add("hide"));
+  $("#t-" + name).classList.remove("hide");
+  ({ dash: renderDash, records: renderRecords, payroll: renderPayroll, people: renderPeople, settings: renderSettings })[name]();
+  window.scrollTo(0, 0);
+}
+
+/* ---------------- DASHBOARD ---------------- */
+function renderDash() {
+  const tk = todayKey();
+  const today = RECORDS.filter(r => r.date === tk);
+  const active = EMPLOYEES.filter(e => e.active !== false);
+  const inNow = active.filter(e => openRecord(e.id));
+  let hrs = 0, pay = 0;
+  today.forEach(r => { const c = computeShift(r, empById(r.empId), SETTINGS); hrs += c.paid; pay += c.gross; });
+
+  // current pay period
+  const per = currentPeriod();
+  const inPer = RECORDS.filter(r => r.date >= per.from && r.date <= per.to);
+  let perHrs = 0, perPay = 0;
+  inPer.forEach(r => { const c = computeShift(r, empById(r.empId), SETTINGS); perHrs += c.paid; perPay += c.gross; });
+
+  const openOld = RECORDS.filter(r => r.inAt && !r.outAt && r.date < tk);
+  // shifts the clock says ran longer than a full day — always a missed time out
+  const broken = RECORDS.filter(r => r.inAt && r.outAt &&
+    (r.outAt - r.inAt) / 3600000 > (SETTINGS.maxShiftHours || 16));
+  // shifts closed automatically because nobody tapped out
+  const closedForThem = RECORDS.filter(r => r.autoClosed && r.date >= per.from && r.date <= per.to);
+  // anyone still missing an end time on their roster — pay can't be right until it's set
+  const noEnd = active.filter(e => (e.weekSchedule || []).some(s => { const p = parseSlot(s, SETTINGS); return p && p.legacy; }));
+
+  $("#t-dash").innerHTML = `
+    <div class="stat-grid">
+      <div class="stat"><div class="k">Currently in</div><div class="v">${inNow.length}<span style="font-size:15px;color:var(--muted);font-weight:600"> / ${active.length}</span></div></div>
+      <div class="stat"><div class="k">Hours today</div><div class="v">${hrs.toFixed(2)}</div></div>
+      <div class="stat"><div class="k">Payroll today</div><div class="v" style="font-size:22px">${money(pay)}</div></div>
+      <div class="stat"><div class="k">This period</div><div class="v" style="font-size:22px">${money(perPay)}</div><div class="tiny muted">${fmtDateShort(per.from)} – ${fmtDateShort(per.to)} · ${perHrs.toFixed(1)} hrs</div></div>
+    </div>
+
+    ${openOld.length ? `<div class="card pad-sm" style="border-left:3px solid var(--warn)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">⚠️</span>
+        <div class="grow">
+          <strong style="font-size:14px">${openOld.length} unclosed shift${openOld.length > 1 ? "s" : ""} from previous days</strong>
+          <div class="small muted">Someone forgot to time out. These earn ₱0 until you fix them in Records.</div>
+          <div class="small" style="margin-top:6px">${openOld.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)}`).join(" · ")}</div>
+        </div>
+        <button class="btn sm" onclick="renderTabFromDash('records')">Fix</button>
+      </div>
+    </div>` : ""}
+
+    ${noEnd.length ? `<div class="card pad-sm" style="border-left:3px solid var(--warn)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">🕑</span>
+        <div class="grow">
+          <strong style="font-size:14px">${noEnd.length} ${noEnd.length > 1 ? "people have" : "person has"} no end time on their schedule</strong>
+          <div class="small muted">Pay is based on each person's rostered shift, so the app is assuming a ${SETTINGS.standardHours}-hour day until you set when they finish. Anyone on a 7 or 5 hour shift will be paid wrongly.</div>
+          <div class="small" style="margin-top:6px">${noEnd.slice(0, 8).map(e => esc(e.name)).join(" · ")}</div>
+        </div>
+        <button class="btn sm primary" onclick="renderTabFromDash('people')">Set them</button>
+      </div>
+    </div>` : ""}
+
+    ${broken.length ? `<div class="card pad-sm" style="border-left:3px solid var(--danger)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">🛑</span>
+        <div class="grow">
+          <strong style="font-size:14px">${broken.length} shift${broken.length > 1 ? "s run" : " runs"} longer than a full day</strong>
+          <div class="small muted">Someone timed in and didn't time out until days later, so the clock can't be trusted. ${broken.length > 1 ? "They pay" : "It pays"} ₱0 until the real times are entered.</div>
+          <div class="small" style="margin-top:6px">${broken.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)} (${((r.outAt - r.inAt) / 3600000).toFixed(0)} hrs)`).join(" · ")}</div>
+        </div>
+        <button class="btn sm" onclick="renderTabFromDash('records')">Fix</button>
+      </div>
+    </div>` : ""}
+
+    ${closedForThem.length ? `<div class="card pad-sm" style="border-left:3px solid var(--warn)">
+      <div class="row" style="align-items:flex-start">
+        <span style="font-size:18px">✅</span>
+        <div class="grow">
+          <strong style="font-size:14px">${closedForThem.length} shift${closedForThem.length > 1 ? "s were" : " was"} closed automatically this period</strong>
+          <div class="small muted">Nobody tapped out, so ${closedForThem.length > 1 ? "they were" : "it was"} closed at the rostered end time and paid normally. Check the times are right — if they are, clear the marks so the list stays useful.</div>
+          <div class="small" style="margin-top:6px">${closedForThem.slice(0, 8).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)}`).join(" · ")}</div>
+        </div>
+        <div class="row" style="gap:6px">
+          <button class="btn sm" onclick="renderTabFromDash('records')">Review</button>
+          <button class="btn sm" id="dashClearAuto">Times are fine</button>
+        </div>
+      </div>
+    </div>` : ""}
+
+    <div class="card">
+      <div class="spread" style="margin-bottom:12px">
+        <h3 class="sec-title" style="margin:0">Today — ${fmtDateLong(new Date())}</h3>
+        <button class="btn sm" id="dashAdd">+ Manual entry</button>
+      </div>
+      ${liveBoard(active, tk)}
+    </div>`;
+  $("#dashAdd").onclick = () => editRecord(null);
+  const clearAuto = $("#dashClearAuto");
+  if (clearAuto) clearAuto.onclick = () => confirmBox(
+    `Clear the AUTO-CLOSED mark from <strong>${closedForThem.length}</strong> shift${closedForThem.length > 1 ? "s" : ""}? The times stay exactly as they are — this only says you've checked them.`,
+    () => {
+      closedForThem.forEach(r => { r.autoClosed = false; Sync.queue(r.id); });
+      persistRec(); Sync.flush(true); renderTab(CUR_TAB);
+      toast("Marked as checked");
+    }, "Clear marks");
+}
+window.renderTabFromDash = n => { $$("#tabs .tab").forEach(x => x.classList.toggle("on", x.dataset.tab === n)); renderTab(n); };
+
+function liveBoard(active, tk) {
+  if (!active.length) return `<div class="empty">No employees yet. Add them in the Employees tab.</div>`;
+  const rows = active.map(e => {
+    const recs = RECORDS.filter(r => r.empId === e.id && r.date === tk).sort((a, b) => a.inAt - b.inAt);
+    const open = recs.find(r => !r.outAt);
+    let hrs = 0, pay = 0, late = 0;
+    recs.forEach(r => { const c = computeShift(r, e, SETTINGS); hrs += c.paid; pay += c.gross; late = Math.max(late, c.lateMin); });
+    const first = recs[0], last = recs[recs.length - 1];
+    const status = open
+      ? `<span class="pill in">IN · ${hm((Date.now() - open.inAt) / 3600000)}</span>`
+      : recs.length ? `<span class="pill out">DONE</span>` : `<span class="pill dangerp">ABSENT</span>`;
+    return `<tr>
+      <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">${esc(initials(e.name))}</span>
+        <span><strong>${esc(e.name)}</strong><br><span class="tiny muted">${esc(e.role || "Staff")}</span></span></div></td>
+      <td>${status}</td>
+      <td>${first ? fmtTime(first.inAt) : "—"} ${late ? `<span class="pill warnp">${late}m late</span>` : ""}</td>
+      <td>${last && last.outAt ? fmtTime(last.outAt) : "—"}</td>
+      <td class="num">${hrs ? hrs.toFixed(2) : "—"}</td>
+      <td class="num">${pay ? money(pay) : "—"}</td>
+    </tr>`;
+  }).join("");
+  return `<div class="tbl-scroll"><table>
+    <thead><tr><th>Employee</th><th>Status</th><th>First in</th><th>Last out</th><th class="num">Hours</th><th class="num">Pay</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+function currentPeriod() {
+  const now = new Date();
+  const ps = periodsFor(now.getFullYear(), now.getMonth());
+  const tk = todayKey();
+  return ps.find(p => tk >= p.from && tk <= p.to) || ps[0];
+}
+
+/* ---------------- RECORDS ---------------- */
+const RF = { from: "", to: "", emp: "", q: "" };
+function renderRecords() {
+  if (!RF.from) { const p = currentPeriod(); RF.from = p.from; RF.to = p.to; }
+  $("#t-records").innerHTML = `
+    <div class="card pad-sm noprint">
+      <div class="grid3" style="margin-bottom:10px">
+        <div><label class="f">From</label><input type="date" id="rFrom" value="${RF.from}"></div>
+        <div><label class="f">To</label><input type="date" id="rTo" value="${RF.to}"></div>
+        <div><label class="f">Employee</label><select id="rEmp"><option value="">All employees</option>
+          ${EMPLOYEES.map(e => `<option value="${e.id}" ${RF.emp === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
+      </div>
+      <div class="row wrap-r">
+        <button class="btn sm" id="rThisPeriod">This pay period</button>
+        <button class="btn sm" id="rToday">Today</button>
+        <button class="btn sm" id="rMonth">This month</button>
+        <span class="grow"></span>
+        <button class="btn sm" id="rAdd">+ Manual entry</button>
+        <button class="btn sm" id="rCsv">⬇ CSV</button>
+        <button class="btn sm" id="rPrint">🖨 Print</button>
+      </div>
+    </div>
+    <div id="rTable"></div>`;
+  const bind = () => { RF.from = $("#rFrom").value; RF.to = $("#rTo").value; RF.emp = $("#rEmp").value; drawRecordTable(); };
+  $("#rFrom").onchange = bind; $("#rTo").onchange = bind; $("#rEmp").onchange = bind;
+  $("#rThisPeriod").onclick = () => { const p = currentPeriod(); RF.from = p.from; RF.to = p.to; renderRecords(); };
+  $("#rToday").onclick = () => { RF.from = RF.to = todayKey(); renderRecords(); };
+  $("#rMonth").onclick = () => { const n = new Date(); RF.from = `${n.getFullYear()}-${pad(n.getMonth() + 1)}-01`; RF.to = dayKey(new Date(n.getFullYear(), n.getMonth() + 1, 0)); renderRecords(); };
+  $("#rAdd").onclick = () => editRecord(null);
+  $("#rCsv").onclick = exportRecordsCsv;
+  $("#rPrint").onclick = () => window.print();
+  drawRecordTable();
+}
+function filteredRecords() {
+  return RECORDS
+    .filter(r => (!RF.from || r.date >= RF.from) && (!RF.to || r.date <= RF.to))
+    .filter(r => !RF.emp || r.empId === RF.emp)
+    .sort((a, b) => (b.date.localeCompare(a.date)) || (b.inAt - a.inAt));
+}
+function drawRecordTable() {
+  const list = filteredRecords();
+  if (!list.length) { $("#rTable").innerHTML = `<div class="card"><div class="empty">No records in this range.</div></div>`; return; }
+  let tH = 0, tOt = 0, tP = 0, tPrem = 0, tReg = 0, tDed = 0;
+  const rows = list.map(r => {
+    const e = empById(r.empId); const c = computeShift(r, e, SETTINGS);
+    tH += c.worked; tOt += c.ot; tP += c.gross; tPrem += c.premium; tReg += c.regular; tDed += c.deduction;
+    const flags = [];
+    if (c.flags.includes("open")) flags.push(`<span class="pill warnp">NO TIME OUT</span>`);
+    if (c.flags.includes("late")) flags.push(`<span class="pill warnp" title="Arrived ${c.lateMin} min after the ${esc(c.shift)} shift started — deducted per minute">${c.lateMin}m LATE</span>`);
+    if (c.flags.includes("undertime")) flags.push(`<span class="pill warnp" title="Left ${c.underMin} min before the ${esc(c.shift)} shift ended — deducted per minute">${c.underMin}m EARLY</span>`);
+    if (c.flags.includes("ot-block")) flags.push(`<span class="pill out" title="A second block clocked after their shift had already finished. Counted entirely as overtime.">OT BLOCK</span>`);
+    if (c.flags.includes("ot")) flags.push(`<span class="pill in" title="Approved overtime — paid">OT ✓</span>`);
+    if (c.flags.includes("ot-pending")) flags.push(`<span class="pill warnp" title="Stayed past the end of the scheduled shift, but overtime isn't approved so it isn't paid. Open Edit and tick 'Approve overtime' if you asked them to stay.">OT?</span>`);
+    if (c.flags.includes("swap")) flags.push(`<span class="pill out" title="Clocked in for the ${esc(c.shift)} shift, not the one their roster shows. Pay and lateness follow the shift they actually worked.">SWAP → ${esc(c.shift)}</span>`);
+    if (c.flags.includes("auto-closed")) flags.push(`<span class="pill dangerp" title="They never clocked out. The shift was closed at its scheduled end time — check it and enter the real time.">AUTO-CLOSED</span>`);
+    if (c.flags.includes("needs-fix")) flags.push(`<span class="pill dangerp" title="This shift runs longer than the daily maximum, so somebody forgot to clock out. It pays nothing until the times are corrected.">FIX TIMES · UNPAID</span>`);
+    if (c.flags.includes("no-schedule")) flags.push(`<span class="pill out" title="No shift set for this person on this day, so pay falls back to the clock. Set their weekly schedule in the Employees tab.">NO SHIFT SET</span>`);
+    if (c.flags.includes("no-end-time")) flags.push(`<span class="pill warnp" title="Their roster has a start time but no end time for this day, so the standard day was assumed. Set the end time in Employees.">NO END TIME</span>`);
+    if (c.flags.includes("holiday")) flags.push(`<span class="pill dangerp" title="${esc(c.holidayName)} · ${esc(c.dayType)}">${Math.round(c.mult * 100)}%</span>`);
+    else if (c.flags.includes("restday")) flags.push(`<span class="pill warnp" title="Worked on their scheduled day off — paid at the plain rate under your policy">REST DAY</span>`);
+    if (c.flags.includes("unscheduled")) flags.push(`<span class="pill warnp" title="Worked on a day their schedule says off — a cover shift or a swap. Open Edit to record which it was.">COVER?</span>`);
+    if (c.flags.includes("override")) flags.push(`<span class="pill out" title="Day type set by hand">MANUAL DAY TYPE</span>`);
+    if (c.flags.includes("too-long")) flags.push(`<span class="pill dangerp">CHECK</span>`);
+    if (r.edited) flags.push(`<span class="pill out">EDITED</span>`);
+    if (r.remote) flags.push(`<span class="pill out" title="Came from the Google Sheet${r.device ? " · " + esc(r.device) : ""}">FROM SHEET</span>`);
+    const ph = (id, url, lbl) => id ? `<img class="thumb" data-ph="${id}" data-lbl="${esc(lbl)}" loading="lazy">`
+      : url ? `<a href="${esc(url)}" target="_blank" rel="noopener" class="thumb-ph" title="Open photo in Google Drive">📷</a>`
+      : `<div class="thumb-ph">—</div>`;
+    const geo = g => g ? `<a href="${mapLink(g)}" target="_blank" rel="noopener" title="±${g.acc}m${g.dist != null ? ` · ${g.dist}m from shop` : ""}">📍</a>` : `<span class="muted">—</span>`;
+    return `<tr data-id="${r.id}">
+      <td>${fmtDateShort(r.date)}</td>
+      <td><strong>${esc(e?.name || "‹deleted›")}</strong></td>
+      <td>${ph(r.inPhoto, r.inPhotoUrl, (e?.name || "") + " — time in")}</td>
+      <td>${fmtTime(r.inAt)} ${geo(r.inGeo)}</td>
+      <td>${ph(r.outPhoto, r.outPhotoUrl, (e?.name || "") + " — time out")}</td>
+      <td>${r.outAt ? fmtTime(r.outAt) + " " + geo(r.outGeo) : `<span class="pill warnp">OPEN</span>`}</td>
+      <td>${c.shift ? `<span class="tiny">${esc(c.shift)}</span>` : `<span class="muted tiny">—</span>`}</td>
+      <td class="num" title="Actual time between clocking in and out">${c.worked ? c.worked.toFixed(2) : "—"}</td>
+      <td class="num" title="Hours they are paid for, before overtime">${c.regular ? c.regular.toFixed(2) : "—"}</td>
+      <td class="num">${c.ot ? c.ot.toFixed(2) : "—"}</td>
+      <td class="num">${c.deduction ? `<span style="color:var(--danger)">−${money(c.deduction).slice(1)}</span>` : "—"}</td>
+      <td class="num">${c.premium ? money(c.premium) : "—"}</td>
+      <td class="num">${c.gross ? money(c.gross) : "—"}</td>
+      <td>${flags.join(" ") || ""}</td>
+      <td class="noprint"><button class="btn sm" data-edit="${r.id}">Edit</button></td>
+    </tr>`;
+  }).join("");
+  $("#rTable").innerHTML = `<div class="tbl-scroll"><table>
+    <thead><tr><th>Date</th><th>Employee</th><th>📷</th><th>Time in</th><th>📷</th><th>Time out</th><th>Shift</th>
+    <th class="num">Clocked</th><th class="num">Paid hrs</th><th class="num">OT</th><th class="num">Deduction</th><th class="num">Premium</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
+    <tbody>${rows}</tbody>
+    <tfoot><tr><td colspan="7">${list.length} entries</td><td class="num">${tH.toFixed(2)}</td><td class="num">${tReg.toFixed(2)}</td><td class="num">${tOt.toFixed(2)}</td><td class="num">${tDed ? "−" + money(tDed).slice(1) : "—"}</td><td class="num">${tPrem ? money(tPrem) : "—"}</td><td class="num">${money(tP)}</td><td colspan="2"></td></tr></tfoot>
+  </table></div>`;
+  // lazy-load thumbs
+  $$("#rTable img.thumb").forEach(async img => {
+    const src = await PhotoDB.get(img.dataset.ph);
+    if (src) { img.src = src; img.onclick = () => lightbox(img.dataset.ph, img.dataset.lbl); }
+    else img.replaceWith(Object.assign(document.createElement("div"), { className: "thumb-ph", textContent: "?" }));
+  });
+  $$("#rTable [data-edit]").forEach(b => b.onclick = () => editRecord(b.dataset.edit));
+}
+
+function toLocalInput(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function editRecord(id) {
+  const r = id ? RECORDS.find(x => x.id === id) : null;
+  const isNew = !r;
+  const m = modal({
+    title: isNew ? "Add manual entry" : "Edit entry",
+    body: `
+      <div class="field"><label class="f">Employee</label>
+        <select id="eEmp">${EMPLOYEES.map(e => `<option value="${e.id}" ${r && r.empId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
+      <div class="grid2">
+        <div class="field"><label class="f">Time in</label><input type="datetime-local" id="eIn" value="${toLocalInput(r?.inAt) || toLocalInput(Date.now())}"></div>
+        <div class="field"><label class="f">Time out <span class="muted" style="font-weight:400">(blank = still in)</span></label><input type="datetime-local" id="eOut" value="${toLocalInput(r?.outAt)}"></div>
+      </div>
+      <div class="field"><label class="f">Note</label><input id="eNote" value="${esc(r?.inNote || "")}" placeholder="e.g. covering for Allen"></div>
+      <div class="field">
+        <label class="f">Day type <span class="muted" style="font-weight:400">(for swaps &amp; cover shifts)</span></label>
+        <select id="eRest">
+          <option value="" ${!r?.restOverride ? "selected" : ""}>Auto — follow their weekly schedule</option>
+          <option value="rest" ${r?.restOverride === "rest" ? "selected" : ""}>Rest day — they were called in on their day off</option>
+          <option value="ordinary" ${r?.restOverride === "ordinary" ? "selected" : ""}>Ordinary day — a swap agreed in advance</option>
+        </select>
+      </div>
+      <div class="note">Leave on <strong>Auto</strong> most of the time. Use this to record what actually happened when someone worked a day their schedule says off — a <em>cover shift</em> (Rest day) or a <em>swap agreed in advance</em> (Ordinary day). Your policy pays rest days at the plain rate, so this doesn't change the pay; it clears the COVER? flag and keeps the record straight. Holidays always follow the calendar.
+      <br><br>Manual edits are tagged <strong>EDITED</strong> so you keep an audit trail.</div>
+      <div class="field">
+        <label class="f">Which shift was this? <span class="muted" style="font-weight:400">(pay is based on this)</span></label>
+        <select id="eShift">
+          <option value="" ${!r?.shiftOverride ? "selected" : ""}>Auto — match to the nearest shift in the roster</option>
+          ${rosterShifts(EMPLOYEES, SETTINGS).map(p => {
+            const v = p.start + "-" + p.end;
+            return `<option value="${esc(v)}" ${r?.shiftOverride === v ? "selected" : ""}>${esc(p.start)}–${esc(p.end)} · ${hm(p.hours)}</option>`;
+          }).join("")}
+          <option value="none" ${r?.shiftOverride === "none" ? "selected" : ""}>No shift — pay the clock instead</option>
+        </select>
+      </div>
+      <div class="note">Auto is right nearly always: it snaps the clock-in to whichever shift the roster runs closest to it, so a swapped closing shift isn't read as a six-hour late arrival. Override it when the guess is wrong.</div>
+      <div class="field" style="margin-top:14px">
+        <label class="f" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="eOtBlock" ${r?.otBlock ? "checked" : ""} style="width:auto">
+          This is an overtime block, not their regular shift
+        </label>
+      </div>
+      <div class="note">Set automatically when someone clocks out and clocks back in on the same day. The whole block counts as overtime rather than a second shift.</div>
+      <div class="field" style="margin-top:14px">
+        <label class="f" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="eOt" ${r?.otApproved ? "checked" : ""} style="width:auto">
+          Approve overtime for this shift
+        </label>
+      </div>
+      <div class="note">Off by default, so time past the end of the shift pays nothing and just carries an <strong>OT?</strong> flag. Tick it when you actually asked them to stay, and those extra hours get paid. Clocking in <em>early</em> is never overtime — the shift starts when the roster says it starts.</div>`,
+    actions: [
+      ...(isNew ? [] : [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox("Delete this entry permanently? Photos will be removed too, on this device and in the Google Sheet.", async () => { PhotoDB.del(r.inPhoto); PhotoDB.del(r.outPhoto); RECORDS = RECORDS.filter(x => x.id !== r.id); Sync.saveOutbox(Sync.outbox().filter(x => x !== r.id)); persistRec(); renderTab(CUR_TAB); toast("Entry deleted"); if (Sync.on) { try { await Sync.call({ action: "delete", id: r.id }); } catch (e) { toast("Deleted here, but couldn't remove it from the Sheet: " + e.message, 5000); } } }); } }]),
+      { label: "Cancel" },
+      {
+        label: "Save", cls: "primary", onClick: (el, close) => {
+          const empId = $("#eEmp", el).value;
+          const inV = $("#eIn", el).value, outV = $("#eOut", el).value;
+          if (!inV) { toast("Time in is required"); return; }
+          const inAt = new Date(inV).getTime();
+          const outAt = outV ? new Date(outV).getTime() : null;
+          if (outAt && outAt <= inAt) { toast("Time out must be after time in"); return; }
+          const restOverride = $("#eRest", el).value || null;
+          const otApproved = $("#eOt", el).checked;
+          const otBlock = $("#eOtBlock", el).checked;
+          const shiftOverride = $("#eShift", el).value || null;
+          let saved;
+          if (isNew) {
+            saved = { id: uid(), empId, date: dayKey(new Date(inAt)), inAt, outAt, inPhoto: null, outPhoto: null, inGeo: null, outGeo: null, inNote: $("#eNote", el).value, outNote: "", restOverride, otApproved, otBlock, shiftOverride, autoClosed: false, edited: true, createdAt: Date.now() };
+            RECORDS.push(saved);
+          } else {
+            // entering a real time out clears the auto-close marker
+            Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, otApproved, otBlock, shiftOverride, autoClosed: false, edited: true });
+            saved = r;
+          }
+          persistRec(); Sync.queue(saved.id); Sync.flush(true);
+          close(); renderTab(CUR_TAB); toast("Saved");
+        }
+      }]
+  });
+  return m;
+}
+
+/* ---------------- PAYROLL ---------------- */
+const PF = { from: "", to: "" };
+function renderPayroll() {
+  if (!PF.from) { const p = currentPeriod(); PF.from = p.from; PF.to = p.to; }
+  const now = new Date();
+  const opts = [];
+  for (let back = 0; back < 6; back++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - back, 1);
+    periodsFor(d.getFullYear(), d.getMonth()).forEach(p => opts.push(Object.assign({}, p, {
+      text: `${d.toLocaleDateString(undefined, { month: "short", year: "numeric" })} — ${p.label}`
+    })));
+  }
+  $("#t-payroll").innerHTML = `
+    <div class="card pad-sm noprint">
+      <div class="grid3" style="margin-bottom:10px">
+        <div><label class="f">Pay period</label><select id="pSel">
+          <option value="">— Custom range —</option>
+          ${opts.map(o => `<option value="${o.from}|${o.to}" ${o.from === PF.from && o.to === PF.to ? "selected" : ""}>${esc(o.text)}</option>`).join("")}
+        </select></div>
+        <div><label class="f">From</label><input type="date" id="pFrom" value="${PF.from}"></div>
+        <div><label class="f">To</label><input type="date" id="pTo" value="${PF.to}"></div>
+      </div>
+      <div class="row wrap-r">
+        <span class="small muted">${SETTINGS.standardHours}h regular · OT ×${SETTINGS.otMultiplier} after ${SETTINGS.standardHours}h${SETTINGS.breakMinutes > 0 ? ` · ${SETTINGS.breakMinutes}m unpaid break past ${SETTINGS.breakAfterHours}h` : " · no unpaid break"}</span>
+        <span class="grow"></span>
+        <button class="btn sm" id="pCsv">⬇ Payroll CSV</button>
+        <button class="btn sm" id="pSlips">🧾 Payslips</button>
+        <button class="btn sm" id="pPrint">🖨 Print</button>
+      </div>
+    </div>
+    <div id="pOut"></div>`;
+  $("#pSel").onchange = e => { if (!e.target.value) return; const [f, t] = e.target.value.split("|"); PF.from = f; PF.to = t; renderPayroll(); };
+  $("#pFrom").onchange = e => { PF.from = e.target.value; drawPayroll(); };
+  $("#pTo").onchange = e => { PF.to = e.target.value; drawPayroll(); };
+  $("#pCsv").onclick = exportPayrollCsv;
+  $("#pSlips").onclick = showPayslips;
+  $("#pPrint").onclick = () => window.print();
+  drawPayroll();
+}
+function payrollData() {
+  const rows = [];
+  EMPLOYEES.forEach(e => {
+    const recs = RECORDS.filter(r => r.empId === e.id && r.date >= PF.from && r.date <= PF.to);
+    if (!recs.length) return;
+    const days = new Set(), agg = { reg: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, underMin: 0, deduction: 0, open: 0, needsFix: 0, shifts: 0, premDays: 0 };
+    recs.forEach(r => {
+      const c = computeShift(r, e, SETTINGS);
+      if (c.flags.includes("open")) agg.open++;
+      if (c.flags.includes("needs-fix")) agg.needsFix++;
+      if (r.outAt && !r.otBlock) { days.add(r.date); agg.shifts++; }
+      if (c.premium > 0) agg.premDays++;
+      agg.reg += c.regular; agg.ot += c.ot; agg.gross += c.gross;
+      agg.base += c.base; agg.premium += c.premium;
+      agg.lateMin += c.lateMin; agg.underMin += c.underMin; agg.deduction += c.deduction;
+    });
+    const sss = agg.gross * (Number(SETTINGS.sssRate) || 0) / 100;
+    const phil = agg.gross * (Number(SETTINGS.philhealthRate) || 0) / 100;
+    const pag = Number(SETTINGS.pagibigFixed) || 0;
+    const ded = sss + phil + pag;
+    rows.push({ e, days: days.size, ...agg, sss, phil, pag, ded, net: agg.gross - ded });
+  });
+  return rows.sort((a, b) => a.e.name.localeCompare(b.e.name));
+}
+function drawPayroll() {
+  const rows = payrollData();
+  const hasDed = (Number(SETTINGS.sssRate) || Number(SETTINGS.philhealthRate) || Number(SETTINGS.pagibigFixed)) > 0;
+  if (!rows.length) { $("#pOut").innerHTML = `<div class="card"><div class="empty">No attendance in ${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}.</div></div>`; return; }
+  const t = rows.reduce((a, r) => ({ days: a.days + r.days, reg: a.reg + r.reg, ot: a.ot + r.ot, gross: a.gross + r.gross, premium: a.premium + r.premium, ded: a.ded + r.ded, net: a.net + r.net }), { days: 0, reg: 0, ot: 0, gross: 0, premium: 0, ded: 0, net: 0 });
+  const openWarn = rows.reduce((a, r) => a + r.open, 0);
+  const fixWarn = rows.reduce((a, r) => a + r.needsFix, 0);
+  $("#pOut").innerHTML = `
+    <div class="card">
+      <div class="spread" style="margin-bottom:4px">
+        <h3 style="font-size:17px">Payroll · ${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}</h3>
+        <div class="center"><div class="tiny muted">TOTAL NET PAYOUT</div><div style="font-size:22px;font-weight:700">${money(t.net)}</div></div>
+      </div>
+      ${openWarn ? `<div class="strip err" style="margin:10px 0"><span class="dot"></span>${openWarn} shift${openWarn > 1 ? "s have" : " has"} no time out and count as 0 hours. Fix them in Records before paying out.</div>` : ""}
+      ${fixWarn ? `<div class="strip err" style="margin:10px 0"><span class="dot"></span>${fixWarn} shift${fixWarn > 1 ? "s run" : " runs"} longer than a full day — somebody forgot to clock out. ${fixWarn > 1 ? "They pay" : "It pays"} nothing until the times are corrected in Records.</div>` : ""}
+      <div class="tbl-scroll" style="margin-top:10px"><table>
+        <thead><tr>
+          <th>Employee</th><th class="num">Rate</th><th class="num">Days</th><th class="num">Paid hrs</th><th class="num">OT hrs</th>
+          <th class="num">Basic pay</th><th class="num">OT pay</th><th class="num">Holiday premium</th><th class="num">Gross</th>
+          ${hasDed ? `<th class="num">Contributions</th><th class="num">Net pay</th>` : ""}
+          <th class="num">Late / early</th>
+        </tr></thead>
+        <tbody>${rows.map(r => `<tr>
+          <td><strong>${esc(r.e.name)}</strong><br><span class="tiny muted">${esc(r.e.role || "Staff")}</span></td>
+          <td class="num">${money(r.e.rate)}</td>
+          <td class="num">${r.days}</td>
+          <td class="num">${r.reg.toFixed(2)}</td>
+          <td class="num">${r.ot ? r.ot.toFixed(2) : "—"}</td>
+          <td class="num">${money(r.reg * r.e.rate)}${r.deduction ? `<br><span class="tiny" style="color:var(--danger)" title="${r.lateMin}m late + ${r.underMin}m early, deducted per minute">after −${money(r.deduction).slice(1)}</span>` : ""}</td>
+          <td class="num">${r.ot ? money(r.ot * r.e.rate * SETTINGS.otMultiplier) : "—"}</td>
+          <td class="num">${r.premium ? `+${money(r.premium)}<br><span class="tiny muted">${r.premDays} day${r.premDays > 1 ? "s" : ""}</span>` : "—"}</td>
+          <td class="num"><strong>${money(r.gross)}</strong></td>
+          ${hasDed ? `<td class="num">${r.ded ? "−" + money(r.ded) : "—"}</td><td class="num"><strong>${money(r.net)}</strong></td>` : ""}
+          <td class="num">${r.lateMin || r.underMin ? `${r.lateMin || 0}m / ${r.underMin || 0}m` : "—"}</td>
+        </tr>`).join("")}</tbody>
+        <tfoot><tr>
+          <td>TOTAL (${rows.length})</td><td></td><td class="num">${t.days}</td>
+          <td class="num">${t.reg.toFixed(2)}</td><td class="num">${t.ot.toFixed(2)}</td><td></td><td></td>
+          <td class="num">${t.premium ? "+" + money(t.premium) : "—"}</td>
+          <td class="num">${money(t.gross)}</td>
+          ${hasDed ? `<td class="num">−${money(t.ded)}</td><td class="num">${money(t.net)}</td>` : ""}
+          <td></td>
+        </tr></tfoot>
+      </table></div>
+      <div class="note" style="margin-top:12px"><strong>Paid hrs</strong> is each person's rostered shift hours, less any minutes they arrived late or left early. It is not the raw time on the clock — Records shows both side by side if you want to compare.</div>
+    </div>`;
+}
+function showPayslips() {
+  const rows = payrollData();
+  if (!rows.length) { toast("Nothing to generate."); return; }
+  const per = `${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}`;
+  const html = rows.map(r => `
+    <div style="border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:12px;page-break-inside:avoid">
+      <div style="display:flex;justify-content:space-between;border-bottom:1px solid #eee;padding-bottom:8px;margin-bottom:10px">
+        <div><strong>${esc(SETTINGS.orgName)}</strong><br><span style="font-size:12px;color:#666">Payslip · ${per}</span></div>
+        <div style="text-align:right"><strong>${esc(r.e.name)}</strong><br><span style="font-size:12px;color:#666">${esc(r.e.role || "Staff")}</span></div>
+      </div>
+      <div class="kv"><span class="k">Days worked</span><span class="v">${r.days}</span></div>
+      ${r.deduction ? `<div class="kv"><span class="k">Scheduled hours × ${money(r.e.rate)}</span><span class="v">${(r.reg + r.deduction / r.e.rate).toFixed(2)} → ${money(r.reg * r.e.rate + r.deduction)}</span></div>
+      <div class="kv"><span class="k">Less ${r.lateMin ? r.lateMin + " min late" : ""}${r.lateMin && r.underMin ? " + " : ""}${r.underMin ? r.underMin + " min early out" : ""}</span><span class="v">−${money(r.deduction)}</span></div>
+      <div class="kv"><span class="k">Basic pay</span><span class="v">${r.reg.toFixed(2)} hrs → ${money(r.reg * r.e.rate)}</span></div>`
+      : `<div class="kv"><span class="k">Scheduled hours × ${money(r.e.rate)}</span><span class="v">${r.reg.toFixed(2)} → ${money(r.reg * r.e.rate)}</span></div>`}
+      ${r.ot ? `<div class="kv"><span class="k">Approved overtime × ${money(r.e.rate * SETTINGS.otMultiplier)}</span><span class="v">${r.ot.toFixed(2)} → ${money(r.ot * r.e.rate * SETTINGS.otMultiplier)}</span></div>` : ""}
+      ${r.premium ? `<div class="kv"><span class="k">Holiday premium (${r.premDays} day${r.premDays > 1 ? "s" : ""})</span><span class="v">+${money(r.premium)}</span></div>` : ""}
+      <div class="kv"><span class="k">Gross pay</span><span class="v">${money(r.gross)}</span></div>
+      ${r.sss ? `<div class="kv"><span class="k">SSS</span><span class="v">−${money(r.sss)}</span></div>` : ""}
+      ${r.phil ? `<div class="kv"><span class="k">PhilHealth</span><span class="v">−${money(r.phil)}</span></div>` : ""}
+      ${r.pag ? `<div class="kv"><span class="k">Pag-IBIG</span><span class="v">−${money(r.pag)}</span></div>` : ""}
+      <div class="kv" style="border-top:2px solid #333"><span class="k"><strong>NET PAY</strong></span><span class="v" style="font-size:17px">${money(r.net)}</span></div>
+    </div>`).join("");
+  modal({ title: "Payslips · " + per, wide: true, body: html, actions: [{ label: "Print", cls: "primary", onClick: () => printHtml("Payslips — " + per, html) }] });
+}
+function printHtml(title, inner) {
+  const w = window.open("", "_blank");
+  w.document.write(`<html><head><title>${esc(title)}</title><style>
+    body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;padding:24px;max-width:720px;margin:0 auto;color:#111}
+    .kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #eee;font-size:14px}
+    .kv .k{color:#666}.kv .v{font-weight:600}
+  </style></head><body>${inner}</body></html>`);
+  w.document.close(); setTimeout(() => w.print(), 350);
+}
+
+/* ---------------- EMPLOYEES ---------------- */
+function renderPeople() {
+  $("#t-people").innerHTML = `
+    <div class="card">
+      <div class="spread" style="margin-bottom:12px">
+        <h3 style="font-size:17px">Employees <span class="muted" style="font-weight:400;font-size:14px">(${EMPLOYEES.filter(e => e.active !== false).length} active)</span></h3>
+        <button class="btn sm primary" id="addEmp">+ Add employee</button>
+      </div>
+      ${EMPLOYEES.length ? `<div class="tbl-scroll"><table>
+        <thead><tr><th>Name</th><th>Position</th><th>Weekly schedule</th><th class="num">Hours/week</th><th class="num">Hourly rate</th><th class="num">Weekly pay</th><th>PIN</th><th>Status</th><th></th></tr></thead>
+        <tbody>${EMPLOYEES.map(e => { const wh = weekHours(e); return `<tr>
+          <td><div class="row"><span class="avatar" style="width:30px;height:30px;font-size:12px">${esc(initials(e.name))}</span><strong>${esc(e.name)}</strong></div></td>
+          <td>${esc(e.role || "Staff")}</td>
+          <td>${scheduleStrip(e)}</td>
+          <td class="num">${wh ? wh.toFixed(2) : "—"}</td>
+          <td class="num">${money(e.rate)}</td>
+          <td class="num">${wh ? money(e.rate * wh) : "—"}</td>
+          <td>${e.pin ? "••••" : `<span class="muted">none</span>`}</td>
+          <td>${e.active === false ? `<span class="pill out">INACTIVE</span>` : `<span class="pill in">ACTIVE</span>`}</td>
+          <td><button class="btn sm" data-ed="${e.id}">Edit</button></td>
+        </tr>`; }).join("")}</tbody>
+      </table></div>` : `<div class="empty">No employees yet.</div>`}
+      <div class="note" style="margin-top:12px"><strong>Pay follows the schedule.</strong> Whatever hours you set here is what each person earns for that day — clocking in a few minutes early or out a few minutes late changes nothing. Only arriving late, leaving early, or approved overtime move the number. Deactivating hides someone from the kiosk but keeps their history.</div>
+    </div>`;
+  $("#addEmp").onclick = () => editEmp(null);
+  function scheduleStrip(e) {
+    const raw = (e && e.weekSchedule) || [];
+    const sched = weekScheduleFor(e);
+    // days still carrying a start time with no end are shown amber — pay can't be
+    // computed properly until an end time is entered
+    const needsEnd = raw.some(s => { const p = parseSlot(s, SETTINGS); return p && p.legacy; });
+    const wk = `<div class="row" style="gap:3px">${DAY_NAMES.map((d, i) => {
+      const on = !!sched[i];
+      const legacy = (() => { const p = parseSlot(raw[i], SETTINGS); return p && p.legacy; })();
+      const style = !on ? "background:#f3f4f6;color:#9ca3af"
+        : legacy ? "background:#fef3c7;color:#92400e"
+        : "background:var(--accent-soft);color:var(--accent-dark)";
+      return `<span class="tiny" title="${d}: ${on ? esc(fmtSlot(sched[i])) : "day off"}${legacy ? " (end time not set)" : ""}" style="width:26px;text-align:center;padding:3px 0;border-radius:5px;font-weight:600;${style}">${d[0]}</span>`;
+    }).join("")}</div>`;
+    return wk + (needsEnd ? `<div class="tiny" style="color:#92400e;margin-top:3px">⚠ set end times</div>` : "");
+  }
+  $$("#t-people [data-ed]").forEach(b => b.onclick = () => editEmp(b.dataset.ed));
+}
+function editEmp(id) {
+  const e = id ? empById(id) : null;
+  modal({
+    title: e ? "Edit employee" : "Add employee",
+    body: `
+      <div class="field"><label class="f">Full name *</label><input id="fName" value="${esc(e?.name || "")}" placeholder="Juan Dela Cruz"></div>
+      <div class="grid2">
+        <div class="field"><label class="f">Position</label><input id="fRole" value="${esc(e?.role || "")}" placeholder="Barista"></div>
+        <div class="field"><label class="f">Hourly rate (${SETTINGS.currency})</label><input id="fRate" type="number" step="0.01" min="0" value="${e?.rate ?? 0}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label class="f">4-digit PIN <span class="muted" style="font-weight:400">(optional)</span></label><input id="fPin" inputmode="numeric" maxlength="4" value="${esc(e?.pin || "")}" placeholder="1234"></div>
+        <div class="field"><label class="f">Status</label><select id="fActive">
+          <option value="1" ${e?.active !== false ? "selected" : ""}>Active</option>
+          <option value="0" ${e?.active === false ? "selected" : ""}>Inactive</option></select></div>
+      </div>
+      <h3 class="sec-title" style="margin-top:18px">Weekly schedule</h3>
+      <p class="small muted" style="margin-top:0"><strong>Set both the start and the end time for every day they work.</strong> This is what their pay is based on — an 8-hour shift pays 8 hours whether they tap in two minutes early or two minutes late. Tick <em>Off</em> for a rest day; if they get called in anyway it's flagged for you to review and paid at the plain rate.</p>
+      <div id="fSched"></div>
+      <div class="note" style="margin-top:12px">Hourly rate × their scheduled hours is what they earn. Arriving late or leaving early is deducted per minute; staying past the end time is overtime and pays nothing until you approve it.</div>`,
+    actions: [
+      ...(e ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, () => { EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id); persistEmp(); renderTab(CUR_TAB); toast("Employee deleted"); }); } }] : []),
+      { label: "Cancel" },
+      {
+        label: "Save", cls: "primary", onClick: (el, close) => {
+          const name = $("#fName", el).value.trim();
+          if (!name) { toast("Name is required"); return; }
+          const data = {
+            name, role: $("#fRole", el).value.trim(),
+            rate: Math.max(0, Number($("#fRate", el).value) || 0),
+            pin: $("#fPin", el).value.replace(/\D/g, "").slice(0, 4),
+            active: $("#fActive", el).value === "1",
+            weekSchedule: readScheduleRows($("#fSched", el))
+          };
+          if (e) Object.assign(e, data); else EMPLOYEES.push(Object.assign({ id: uid() }, data));
+          persistEmp(); Sync.pushEmployees(); close(); renderTab(CUR_TAB); toast("Saved");
+        }
+      }]
+  });
+  setTimeout(() => {
+    const el = $("#modalRoot .overlay:last-child");
+    renderScheduleRows($("#fSched", el), weekScheduleFor(e));
+  }, 40);
+}
+
+const DEFAULT_SLOT = () => (SETTINGS.shiftStart || "08:00") + "-" + (SETTINGS.shiftEnd || "17:00");
+/** Total rostered hours across the week — what this person is contracted to earn. */
+function weekHours(e) {
+  return ((e && e.weekSchedule) || []).reduce((n, s) => {
+    const p = parseSlot(s, SETTINGS); return n + (p ? p.hours : 0);
+  }, 0);
+}
+/** Build (or migrate) a 7-slot weekly schedule for an employee being edited. */
+function weekScheduleFor(e) {
+  if (e && e.weekSchedule && e.weekSchedule.length === 7) {
+    // an older roster held start times only — show them with a provisional end
+    return e.weekSchedule.map(s => {
+      const p = parseSlot(s, SETTINGS);
+      return p ? p.start + "-" + p.end : "";
+    });
+  }
+  if (e && e.shiftStart) {
+    const rd = e.restDays || [];
+    const p = parseSlot(e.shiftStart, SETTINGS);
+    const slot = p ? p.start + "-" + p.end : DEFAULT_SLOT();
+    return [0, 1, 2, 3, 4, 5, 6].map(d => rd.includes(d) ? "" : slot);
+  }
+  // brand new employee — assume every day at the shop's default shift
+  return [0, 1, 2, 3, 4, 5, 6].map(() => DEFAULT_SLOT());
+}
+function renderScheduleRows(container, sched) {
+  const hrsOf = slot => { const p = parseSlot(slot, SETTINGS); return p ? hm(p.hours) : "—"; };
+  container.innerHTML = DAY_NAMES.map((d, i) => {
+    const p = parseSlot(sched[i], SETTINGS);
+    return `<div class="row" style="padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap;gap:8px" data-row="${i}">
+      <span style="width:40px;font-weight:600;font-size:14px">${d}</span>
+      <label class="row" style="gap:6px;cursor:pointer">
+        <input type="checkbox" data-off="${i}" ${p ? "" : "checked"} style="width:16px;height:16px">
+        <span class="small muted">Off</span>
+      </label>
+      <input type="time" data-start="${i}" value="${esc(p ? p.start : SETTINGS.shiftStart)}" style="max-width:118px" ${p ? "" : "disabled"}>
+      <span class="small muted">to</span>
+      <input type="time" data-end="${i}" value="${esc(p ? p.end : SETTINGS.shiftEnd)}" style="max-width:118px" ${p ? "" : "disabled"}>
+      <span class="tiny muted" data-hrs="${i}" style="min-width:52px">${p ? hrsOf(sched[i]) : ""}</span>
+    </div>`;
+  }).join("");
+  DAY_NAMES.forEach((_, i) => {
+    const off = container.querySelector(`[data-off="${i}"]`);
+    const a = container.querySelector(`[data-start="${i}"]`);
+    const b = container.querySelector(`[data-end="${i}"]`);
+    const lbl = container.querySelector(`[data-hrs="${i}"]`);
+    const upd = () => {
+      a.disabled = b.disabled = off.checked;
+      lbl.textContent = off.checked ? "" : hrsOf(a.value + "-" + b.value);
+    };
+    off.onchange = a.oninput = b.oninput = upd;
+  });
+}
+function readScheduleRows(container) {
+  return [0, 1, 2, 3, 4, 5, 6].map(i => {
+    if (container.querySelector(`[data-off="${i}"]`).checked) return "";
+    const a = container.querySelector(`[data-start="${i}"]`).value || SETTINGS.shiftStart;
+    const b = container.querySelector(`[data-end="${i}"]`).value || SETTINGS.shiftEnd;
+    return a + "-" + b;
+  });
+}
+
+/* ---------------- SETTINGS ---------------- */
+function renderSettings() {
+  const s = SETTINGS;
+  const chk = (id, label, on, hint) => `<label style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line);cursor:pointer">
+    <input type="checkbox" id="${id}" ${on ? "checked" : ""} style="width:18px;height:18px;margin-top:2px;flex:none">
+    <span><strong style="font-size:14.5px">${label}</strong><br><span class="small muted">${hint}</span></span></label>`;
+  $("#t-settings").innerHTML = `
+    <div class="card">
+      <h3 class="sec-title">Branding</h3>
+      <div class="grid2">
+        <div class="field"><label class="f">Business name</label><input id="sOrg" value="${esc(s.orgName)}"></div>
+        <div class="field"><label class="f">Tagline</label><input id="sTag" value="${esc(s.tagline)}"></div>
+      </div>
+      <div class="grid2">
+        <div class="field"><label class="f">Accent colour</label><input type="color" id="sAccent" value="${s.accent}" style="height:44px;padding:4px"></div>
+        <div class="field"><label class="f">Currency symbol</label><input id="sCur" value="${esc(s.currency)}" maxlength="3"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec-title">Hours &amp; overtime</h3>
+      <div class="grid3">
+        <div class="field"><label class="f">Regular hours / day</label><input type="number" id="sStd" step="0.5" min="1" max="24" value="${s.standardHours}"></div>
+        <div class="field"><label class="f">OT multiplier</label><input type="number" id="sOt" step="0.05" min="1" value="${s.otMultiplier}"></div>
+        <div class="field"><label class="f">Round hours to (min)</label><select id="sRound">
+          ${[1, 5, 10, 15, 30].map(v => `<option value="${v}" ${s.roundToMinutes == v ? "selected" : ""}>${v} min</option>`).join("")}</select></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label class="f">Unpaid break (min)</label><input type="number" id="sBreak" min="0" step="5" value="${s.breakMinutes}"></div>
+        <div class="field"><label class="f">…applied past (hrs)</label><input type="number" id="sBreakAfter" min="0" step="0.5" value="${s.breakAfterHours}"></div>
+        <div class="field"><label class="f">Max shift length (hrs)</label><input type="number" id="sMax" min="1" max="24" value="${s.maxShiftHours}"></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label class="f">Default shift start</label><input type="time" id="sStart" value="${s.shiftStart}"></div>
+        <div class="field"><label class="f">Default shift end</label><input type="time" id="sEnd" value="${s.shiftEnd || "17:00"}"></div>
+        <div class="field"><label class="f">Grace period (min)</label><input type="number" id="sGrace" min="0" value="${s.gracePeriodMin}"></div>
+      </div>
+      <div class="grid3">
+        <div class="field"><label class="f">Overtime starts after (min)</label><input type="number" id="sOtMin" min="0" value="${s.otMinMinutes ?? 15}"></div>
+        <div class="field"><label class="f">Auto-close after (hrs past end)</label><input type="number" id="sAutoClose" min="0" step="0.5" value="${s.autoCloseHours ?? 2}"></div>
+        <div class="field"><label class="f">Pay period</label><select id="sPeriod">
+          <option value="weekly" ${s.payPeriod === "weekly" ? "selected" : ""}>Weekly (Mon–Sun)</option>
+          <option value="semi" ${s.payPeriod === "semi" ? "selected" : ""}>Semi-monthly (1–15, 16–end)</option>
+          <option value="monthly" ${s.payPeriod === "monthly" ? "selected" : ""}>Monthly</option></select></div>
+      </div>
+      ${chk("sUnder", "Deduct minutes left early", s.deductUndertime !== false, "Leaving before the shift ends is charged per minute, the same as arriving late. Turn off to pay the full shift regardless of when they clock out.")}
+      ${chk("sSwaps", "Auto-detect shift swaps", s.detectSwaps !== false, "Snaps a clock-in to whichever shift in the roster it's closest to, so someone covering a closing shift isn't recorded as six hours late. You can override any record in Records → Edit.")}
+      <div class="note" style="margin-top:12px">
+        <strong>Pay is based on each person's rostered shift, set per day in the Employees tab.</strong> An 8-hour shift pays 8 hours; a 5-hour shift pays 5. Clocking in early or out a little late changes nothing.
+        <br><br>The clock is what catches exceptions: <strong>late</strong> minutes and <strong>early-out</strong> minutes are deducted per minute, and time past the shift end is <strong>overtime</strong> that pays nothing until you approve it on that record.
+        <br><br><strong>Grace period</strong> is free minutes before lateness is charged${Number(s.gracePeriodMin) ? ` — currently ${s.gracePeriodMin} min` : " — currently 0, so every late minute counts"}.
+        <br><br><strong>Regular hours / day</strong> and the OT multiplier above are only used as a fallback for anyone with no schedule set.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec-title">Holiday calendar</h3>
+      ${chk("sHolPrem", "Apply holiday premiums", s.holidayPremiums, "Turn off to pay every day at the plain rate.")}
+      <div class="grid2" style="margin-top:14px">
+        <div class="field"><label class="f">Regular holiday rate</label>
+          <input type="number" id="sHolReg" step="0.05" min="1" value="${s.regularHolidayMult ?? 1.0}">
+          <span class="tiny muted">${Math.round((s.regularHolidayMult ?? 1) * 100)}% — e.g. Christmas, National Heroes Day</span></div>
+        <div class="field"><label class="f">Special non-working rate</label>
+          <input type="number" id="sHolSpec" step="0.05" min="1" value="${s.specialHolidayMult ?? 1.3}">
+          <span class="tiny muted">${Math.round((s.specialHolidayMult ?? 1.3) * 100)}% — e.g. Ninoy Aquino Day, All Saints' Day</span></div>
+      </div>
+      <div class="row wrap-r" style="margin:14px 0">
+        <button class="btn sm" id="holAdd">+ Add a date</button>
+        <button class="btn sm" id="holLoad">Load 2026 PH holidays</button>
+        <button class="btn sm ghost" id="holClear">Clear all</button>
+      </div>
+      <div id="holList"></div>
+      <div class="note" style="margin-top:12px">
+        <strong>Your shop's rates, applied to hours actually worked:</strong> regular holiday ${Math.round((s.regularHolidayMult ?? 1) * 100)}% · special non-working ${Math.round((s.specialHolidayMult ?? 1.3) * 100)}% · rest day plain rate.
+        Overtime on a holiday is paid at that same rate, and a holiday landing on someone's rest day adds nothing on top.
+        <br><br>You're on <strong>no work, no pay</strong>, so nobody is paid for a holiday they didn't work.
+        <br><br>⚠️ <strong>These sit below the Labor Code figures.</strong> The statutory rates are 200% for a worked regular holiday and 130% for a special non-working day, and rank-and-file employees covered by the hours-of-work rules are entitled to them. Small establishments and certain arrangements are treated differently, which may well cover you — but it's worth one conversation with your bookkeeper or the DOLE Davao field office to know where you stand. I'm not a labour lawyer, and this is cheap to confirm and expensive to get wrong.
+        <br><br>Eid'l Fitr and Eid'l Adha are proclaimed separately each year — add them here once announced. Holiday classifications change by proclamation, so re-check every January.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec-title">Optional deductions (% of gross)</h3>
+      <div class="grid3">
+        <div class="field"><label class="f">SSS %</label><input type="number" id="sSss" step="0.1" min="0" value="${s.sssRate}"></div>
+        <div class="field"><label class="f">PhilHealth %</label><input type="number" id="sPhil" step="0.1" min="0" value="${s.philhealthRate}"></div>
+        <div class="field"><label class="f">Pag-IBIG (fixed ${esc(s.currency)})</label><input type="number" id="sPag" step="1" min="0" value="${s.pagibigFixed}"></div>
+      </div>
+      <div class="note">Leave at 0 to skip. These are simple estimates — check the current SSS/PhilHealth contribution tables for exact amounts.</div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec-title">Clock-in rules</h3>
+      ${chk("sPhoto", "Require a photo", s.requirePhoto, "Selfie captured at every time in and time out.")}
+      ${chk("sLoc", "Require GPS location", s.requireLocation, "Coordinates + accuracy saved with each entry. Clock-in is blocked if location is denied.")}
+      ${chk("sPin", "Require employee PIN", s.requirePin, "Extra check before the camera. Only applies to employees who have a PIN set.")}
+      <div class="grid3" style="margin-top:14px">
+        <div class="field"><label class="f">Shop latitude</label><input id="sLat" value="${esc(s.shopLat)}" placeholder="7.0731"></div>
+        <div class="field"><label class="f">Shop longitude</label><input id="sLng" value="${esc(s.shopLng)}" placeholder="125.6128"></div>
+        <div class="field"><label class="f">Radius (m)</label><input type="number" id="sRad" min="10" value="${s.shopRadius}"></div>
+      </div>
+      <button class="btn sm" id="useHere">📍 Use my current location as the shop</button>
+      <div class="note" style="margin-top:10px">Optional. If set, each entry shows how far the employee was from the shop. Nothing is blocked — you just see the distance.</div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec-title">Admin PIN</h3>
+      <div class="grid2">
+        <div class="field"><label class="f">Dashboard PIN</label><input id="sPinAdmin" inputmode="numeric" maxlength="6" value="${esc(s.adminPin)}"></div>
+      </div>
+      <div class="note">This is a convenience lock only. Anyone who opens this page on this device can read the stored data through the browser. Don't put anything you wouldn't put in a shared spreadsheet.</div>
+    </div>
+
+    ${isTrulyAdminDevice() ? `
+    <div class="card">
+      <h3 class="sec-title">Preview as staff</h3>
+      <p class="small muted" style="margin-top:0">See exactly what a staff device sees — no pay rates, no records, kiosk only. This is a view on your own device; it never touches your real admin key or your stored records.</p>
+      <button class="btn sm" id="togglePreview">${PREVIEW_STAFF ? "Exit staff preview" : "👀 Preview as staff"}</button>
+    </div>
+    ` : ""}
+
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <h3 class="sec-title">Google Sheets sync</h3>
+      <p class="small muted" style="margin-top:0">Sends every clock-in to a Google Sheet in your Drive, with the selfies saved to a Drive folder. This is what lets staff use their own phones while you see everything in one place. Setup instructions are in <strong>GOOGLE-SHEETS-SETUP.md</strong>.</p>
+      <div class="field"><label class="f">Web app URL</label>
+        <input id="sSyncUrl" value="${esc(s.syncUrl)}" placeholder="https://script.google.com/macros/s/AKfy…/exec"></div>
+      <div class="grid2">
+        <div class="field"><label class="f">${isAdminDevice() ? "Admin key (this device)" : "Staff key (this device)"}</label>
+          <input id="sSyncSec" type="password" value="${esc(s.syncSecret)}" placeholder="must match ADMIN_KEY in your script"></div>
+        <div class="field"><label class="f">This device is called</label><input id="sDevice" value="${esc(deviceName())}"></div>
+      </div>
+      ${isAdminDevice() ? `
+      <div class="field"><label class="f">Staff key (goes in the staff link)</label>
+        <input id="sSyncStaff" type="password" value="${esc(s.syncStaffSecret)}" placeholder="must match STAFF_KEY in your script"></div>
+      <div class="note">Two different keys, both set in your Apps Script. The <strong>admin key</strong> stays on this device and can read everything. The <strong>staff key</strong> is the one you hand out — it can only record attendance and read the list of names. It cannot see pay rates, read records, or delete anything.</div>
+      ` : `
+      <div class="note">This device was set up from a staff link. It can record attendance and nothing else — it can't read records or pay rates. That's deliberate.</div>
+      `}
+      ${chk("sSyncPhotos", "Upload selfies to Drive", s.syncPhotos, "Turn off to sync only times and locations. Uses far less data on mobile.")}
+      <div class="row wrap-r" style="margin-top:14px">
+        <button class="btn sm primary" id="syncTest">Test connection</button>
+        <button class="btn sm" id="syncPushAll">⬆ Re-upload &amp; recompute all</button>
+        <button class="btn sm" id="syncPullNow">⬇ Pull from Sheet</button>
+        <button class="btn sm" id="syncSort">↕ Sort the Sheet by date</button>
+        <button class="btn sm" id="syncOpen">Open the Sheet</button>
+      </div>
+      <div id="syncMsg" class="small" style="margin-top:12px"></div>
+    </div>
+
+    <div class="card" style="border-left:3px solid var(--accent)">
+      <h3 class="sec-title">Staff link</h3>
+      <p class="small muted" style="margin-top:0">Send this to your staff instead of the plain website link. Opening it once sets their phone up automatically — they get your real employee list and their clock-ins go straight to your Sheet. No settings for them to fill in.</p>
+      <div class="field"><input id="staffLink" readonly value="" onclick="this.select()" style="font-size:13px"></div>
+      <div class="row wrap-r">
+        <button class="btn sm primary" id="copyLink">📋 Copy staff link</button>
+        <button class="btn sm" id="shareLink">Share…</button>
+      </div>
+      <div class="note" style="margin-top:12px">This link carries the <strong>staff key only</strong>. Someone holding it can record attendance — that's all. They cannot see anyone's pay rate, read past records, delete entries, or change the roster, and it gives no access to your Google account or this dashboard.
+      <br><br>Still treat it like a shop key. If it leaks, or when someone leaves, change <code>STAFF_KEY</code> in your script, redeploy, and send a fresh link. Your admin key and your data are untouched by that.</div>
+    </div>
+
+    <div class="card">
+      <h3 class="sec-title">Data &amp; backup</h3>
+      <div class="row wrap-r" style="margin-bottom:12px">
+        <button class="btn sm" id="bkExport">⬇ Export backup (JSON)</button>
+        <button class="btn sm" id="bkExportPhotos">⬇ Export with photos</button>
+        <button class="btn sm" id="bkImport">⬆ Restore backup</button>
+        <button class="btn sm danger" id="bkPurge">🗑 Purge old photos</button>
+      </div>
+      <input type="file" id="bkFile" accept="application/json" class="hide">
+      <div class="small muted" id="storeInfo">Calculating storage…</div>
+      <div class="note" style="margin-top:12px"><strong>Important:</strong> data lives in this browser on this device only. Different phone = different data. Export a backup weekly, and before clearing browser data or switching devices.</div>
+    </div>
+
+    <div class="card">
+      <div class="row wrap-r">
+        <button class="btn primary" id="saveSet">Save settings</button>
+        <button class="btn" id="resetSet">Reset to defaults</button>
+      </div>
+    </div>`;
+
+  if ($("#togglePreview")) $("#togglePreview").onclick = () => setPreviewStaff(!PREVIEW_STAFF);
+
+  $("#saveSet").onclick = () => {
+    Object.assign(SETTINGS, {
+      orgName: $("#sOrg").value.trim() || "Attendance",
+      tagline: $("#sTag").value.trim(),
+      accent: $("#sAccent").value,
+      currency: $("#sCur").value || "₱",
+      standardHours: clamp(Number($("#sStd").value) || 8, 1, 24),
+      otMultiplier: Math.max(1, Number($("#sOt").value) || 1),
+      roundToMinutes: Number($("#sRound").value) || 1,
+      breakMinutes: Math.max(0, Number($("#sBreak").value) || 0),
+      breakAfterHours: Math.max(0, Number($("#sBreakAfter").value) || 0),
+      maxShiftHours: clamp(Number($("#sMax").value) || 16, 1, 24),
+      shiftStart: $("#sStart").value || "08:00",
+      shiftEnd: $("#sEnd").value || "17:00",
+      gracePeriodMin: Math.max(0, Number($("#sGrace").value) || 0),
+      otMinMinutes: Math.max(0, Number($("#sOtMin").value) || 0),
+      autoCloseHours: Math.max(0, Number($("#sAutoClose").value) || 0),
+      deductUndertime: $("#sUnder").checked,
+      detectSwaps: $("#sSwaps").checked,
+      payPeriod: $("#sPeriod").value,
+      sssRate: Math.max(0, Number($("#sSss").value) || 0),
+      philhealthRate: Math.max(0, Number($("#sPhil").value) || 0),
+      pagibigFixed: Math.max(0, Number($("#sPag").value) || 0),
+      requirePhoto: $("#sPhoto").checked,
+      requireLocation: $("#sLoc").checked,
+      requirePin: $("#sPin").checked,
+      shopLat: $("#sLat").value.trim(),
+      shopLng: $("#sLng").value.trim(),
+      shopRadius: Number($("#sRad").value) || 150,
+      adminPin: $("#sPinAdmin").value.replace(/\D/g, "") || "1234",
+      syncUrl: $("#sSyncUrl").value.trim(),
+      syncSecret: $("#sSyncSec").value.trim(),
+      syncStaffSecret: $("#sSyncStaff") ? $("#sSyncStaff").value.trim() : SETTINGS.syncStaffSecret,
+      syncPhotos: $("#sSyncPhotos").checked,
+      holidayPremiums: $("#sHolPrem").checked,
+      regularHolidayMult: Math.max(1, Number($("#sHolReg").value) || 1),
+      specialHolidayMult: Math.max(1, Number($("#sHolSpec").value) || 1),
+    });
+    // a key that does both jobs is the bug we just fixed — refuse to recreate it
+    if (SETTINGS.syncStaffSecret && SETTINGS.syncStaffSecret === SETTINGS.syncSecret) {
+      SETTINGS.syncStaffSecret = "";
+      toast("Admin and staff keys must be different — staff key cleared.", 5000);
+    }
+    setDeviceName($("#sDevice").value.trim() || deviceName());
+    persistSet(); applyTheme(); paintSyncBadges(); PF.from = ""; RF.from = ""; renderSettings(); toast("Settings saved");
+  };
+
+  // staff share link
+  const linkBox = $("#staffLink");
+  if (linkBox) {
+    const linkReady = () => Sync.on && isAdminDevice() && !!SETTINGS.syncStaffSecret;
+    const blocker = () =>
+      !isAdminDevice() ? "Only the admin device can create staff links."
+      : !Sync.on ? "Set up Google Sheets sync first, then save."
+      : "Fill in the Staff key above and press Save settings.";
+    linkBox.value = linkReady() ? makeSetupLink() : blocker();
+    $("#copyLink").onclick = async () => {
+      if (!linkReady()) { toast(blocker()); return; }
+      const link = makeSetupLink();
+      try { await navigator.clipboard.writeText(link); toast("Staff link copied — paste it in your group chat"); }
+      catch (e) { linkBox.select(); toast("Press Cmd/Ctrl+C to copy the highlighted link"); }
+    };
+    $("#shareLink").onclick = async () => {
+      if (!linkReady()) { toast(blocker()); return; }
+      const data = { title: SETTINGS.orgName + " — Attendance", text: "Tap to set up time in / time out:", url: makeSetupLink() };
+      if (navigator.share) { try { await navigator.share(data); } catch (e) { } }
+      else { linkBox.select(); toast("Sharing isn't available here — copy the link instead"); }
+    };
+  }
+
+  drawHolidays();
+  $("#holAdd").onclick = () => editHoliday(null);
+  $("#holLoad").onclick = () => {
+    const have = new Set((SETTINGS.holidays || []).map(h => h.date));
+    const added = PH_HOLIDAYS_2026.filter(h => !have.has(h.date));
+    SETTINGS.holidays = (SETTINGS.holidays || []).concat(added).sort((a, b) => a.date.localeCompare(b.date));
+    persistSet(); drawHolidays(); toast(`Added ${added.length} holiday${added.length === 1 ? "" : "s"}`);
+  };
+  $("#holClear").onclick = () => confirmBox("Remove every date from the holiday calendar?", () => {
+    SETTINGS.holidays = []; persistSet(); drawHolidays(); toast("Calendar cleared");
+  }, "Clear");
+
+  const msg = (cls, html) => $("#syncMsg").innerHTML = `<div class="strip ${cls}"><span class="dot"></span><span>${html}</span></div>`;
+  const needSaved = () => {
+    if ($("#sSyncUrl").value.trim() !== SETTINGS.syncUrl || $("#sSyncSec").value.trim() !== SETTINGS.syncSecret) {
+      msg("wait", "Press <strong>Save settings</strong> first, then try again."); return true;
+    }
+    if (!Sync.on) { msg("err", "Fill in both the web app URL and the secret key, then save."); return true; }
+    return false;
+  };
+  $("#syncTest").onclick = async () => {
+    if (needSaved()) return;
+    msg("wait", "Contacting Google…");
+    try {
+      const r = await Sync.ping();
+      // Is the deployed script actually the one that matches this website?
+      // Saving Code.gs doesn't publish it, and a stale deployment produces wrong
+      // pay with no visible symptom, so say so rather than let it pass quietly.
+      const have = new Set(r.features || []);
+      const missing = SCRIPT_NEEDS.filter(f => !have.has(f.id));
+      const stale = missing.length
+        ? `<div class="strip err" style="margin-top:10px"><span class="dot"></span>
+             <span><strong>Your Google script is out of date</strong> — it's missing: ${missing.map(f => esc(f.label)).join(", ")}.
+             Pay in the Sheet will not match the website until you fix it.<br>
+             Paste the latest <code>Code.gs</code>, then <strong>Deploy → Manage deployments → ✏️ → Version: New version → Deploy</strong>.</span></div>`
+        : `<div class="tiny muted" style="margin-top:6px">Script version ${esc(r.version || "unknown")} · up to date</div>`;
+
+      if (r.role === "staff") {
+        msg("ok", "Connected as a <strong>staff device</strong>. It can record attendance only — no records or pay rates are readable from here." + stale);
+      } else {
+        msg("ok", `Connected as <strong>admin</strong>. The Sheet currently holds <strong>${r.records}</strong> record(s). <a href="${r.sheet}" target="_blank" rel="noopener">Open it →</a>` + stale);
+        SETTINGS.syncSheetUrl = r.sheet; persistSet();
+      }
+      paintSyncBadges();
+    } catch (e) { msg("err", "Couldn't connect: " + esc(e.message)); }
+  };
+  $("#syncPushAll").onclick = async () => {
+    if (needSaved()) return;
+    confirmBox(`Re-send all <strong>${RECORDS.length}</strong> records to the Sheet and recompute their pay? Rows are matched by ID and updated in place — nothing is duplicated. Use this after a pay-rule change to refresh every row.<br><br>It goes in small batches with a pause between each, so Google doesn't get overwhelmed. Expect roughly a minute per 40 records. <strong>Leave this page open.</strong>`, async () => {
+      Sync.saveOutbox(RECORDS.map(r => r.id));
+      const btn = $("#syncPushAll"); btn.disabled = true;
+      // keep the count moving on screen — a long run with a frozen message looks hung
+      const tick = setInterval(() => {
+        const left = Sync.outbox().length;
+        msg("wait", `Uploading &amp; recomputing… <strong>${RECORDS.length - left}</strong> of ${RECORDS.length} done${Sync.lastError ? ` <span class="muted">· ${esc(Sync.lastError)}</span>` : ""}. Please leave this page open.`);
+      }, 700);
+      const res = await Sync.flush(false);
+      clearInterval(tick); btn.disabled = false;
+      const left = Sync.outbox().length;
+      if (Sync.status === "error") {
+        msg("err", `Stopped after <strong>${res.sent}</strong> of ${res.total}: ${esc(Sync.lastError)}.<br>The remaining <strong>${left}</strong> are still queued — press the button again and it picks up where it left off.`);
+      } else {
+        msg("ok", `Re-sent and recomputed <strong>${res.sent}</strong> record(s).`);
+      }
+    }, "Recompute all");
+  };
+  $("#syncPullNow").onclick = async () => {
+    if (needSaved()) return;
+    msg("wait", "Downloading from the Sheet…");
+    try {
+      const r = await Sync.pull();
+      msg("ok", `Done — ${r.added} new record(s) added, ${r.updated} completed, ${r.total} total in the Sheet.`);
+    } catch (e) { msg("err", "Pull failed: " + esc(e.message)); }
+  };
+  $("#syncSort").onclick = async () => {
+    if (needSaved()) return;
+    msg("wait", "Sorting the Sheet…");
+    try {
+      const r = await Sync.callRetry({ action: "sort" });
+      msg("ok", `Sorted <strong>${r.rows}</strong> row(s) by date, newest first. Rows are matched by ID, so nothing moved anywhere it shouldn't.`);
+    } catch (e) {
+      msg("err", "Couldn't sort: " + esc(e.message) + (/cannot do that|refused/i.test(e.message)
+        ? " — your Google script is still the old version. Paste the new Code.gs and redeploy as a New version." : ""));
+    }
+  };
+  $("#syncOpen").onclick = () => {
+    if (SETTINGS.syncSheetUrl) window.open(SETTINGS.syncSheetUrl, "_blank");
+    else msg("wait", "Press <strong>Test connection</strong> once and the link will appear here.");
+  };
+  $("#resetSet").onclick = () => confirmBox("Reset all settings to defaults? Employees and records are not affected.", () => {
+    SETTINGS = Object.assign({}, DEFAULT_SETTINGS); persistSet(); applyTheme(); renderSettings(); toast("Settings reset");
+  }, "Reset");
+  $("#useHere").onclick = () => {
+    if (!navigator.geolocation) return toast("Geolocation not available");
+    toast("Getting location…");
+    navigator.geolocation.getCurrentPosition(p => {
+      $("#sLat").value = p.coords.latitude.toFixed(6);
+      $("#sLng").value = p.coords.longitude.toFixed(6);
+      toast("Location filled in — press Save settings");
+    }, () => toast("Couldn't get location"), { enableHighAccuracy: true, timeout: 12000 });
+  };
+  $("#bkExport").onclick = () => doBackup(false);
+  $("#bkExportPhotos").onclick = () => doBackup(true);
+  $("#bkImport").onclick = () => $("#bkFile").click();
+  $("#bkFile").onchange = restoreBackup;
+  $("#bkPurge").onclick = purgePhotos;
+  storageInfo();
+}
+
+/* ---------------- holiday calendar ---------------- */
+const HOL_BADGE = { regular: `<span class="pill dangerp">REGULAR · 200%</span>`, special: `<span class="pill warnp">SPECIAL · 130%</span>`, working: `<span class="pill out">WORKING · no premium</span>` };
+function drawHolidays() {
+  const el = $("#holList"); if (!el) return;
+  const list = (SETTINGS.holidays || []).slice().sort((a, b) => a.date.localeCompare(b.date));
+  const upcoming = list.filter(h => h.date >= todayKey());
+  if (!list.length) { el.innerHTML = `<div class="empty">No dates yet. Press <strong>Load 2026 PH holidays</strong> to fill this in.</div>`; return; }
+  el.innerHTML = `<div class="tbl-scroll" style="max-height:340px;overflow-y:auto"><table>
+    <thead><tr><th>Date</th><th>Day</th><th>Holiday</th><th>Type</th><th></th></tr></thead>
+    <tbody>${list.map(h => `<tr style="${h.date < todayKey() ? "opacity:.5" : ""}">
+      <td>${h.date}</td>
+      <td>${DAY_NAMES[parseKey(h.date).getDay()]}</td>
+      <td><strong>${esc(h.name)}</strong></td>
+      <td>${HOL_BADGE[h.type] || h.type}</td>
+      <td><button class="btn sm" data-hol="${h.date}">Edit</button></td>
+    </tr>`).join("")}</tbody>
+  </table></div>
+  <div class="small muted" style="margin-top:8px">${list.length} date(s) · ${upcoming.length} still upcoming</div>`;
+  $$("#holList [data-hol]").forEach(b => b.onclick = () => editHoliday(b.dataset.hol));
+}
+function editHoliday(date) {
+  const h = date ? (SETTINGS.holidays || []).find(x => x.date === date) : null;
+  modal({
+    title: h ? "Edit date" : "Add a date",
+    body: `
+      <div class="field"><label class="f">Date</label><input type="date" id="hDate" value="${esc(h?.date || todayKey())}"></div>
+      <div class="field"><label class="f">Name</label><input id="hName" value="${esc(h?.name || "")}" placeholder="e.g. Eid'l Fitr, or Kadayawan Festival"></div>
+      <div class="field"><label class="f">Type</label><select id="hType">
+        <option value="regular" ${h?.type === "regular" ? "selected" : ""}>Regular holiday — 200% if worked</option>
+        <option value="special" ${h?.type === "special" || !h ? "selected" : ""}>Special non-working — 130% if worked</option>
+        <option value="working" ${h?.type === "working" ? "selected" : ""}>Special working day — paid as normal</option>
+      </select></div>
+      <div class="note">You can add local dates too, like a Davao city holiday, as long as you know which category it falls under.</div>`,
+    actions: [
+      ...(h ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { SETTINGS.holidays = SETTINGS.holidays.filter(x => x.date !== h.date); persistSet(); close(); drawHolidays(); toast("Removed"); } }] : []),
+      { label: "Cancel" },
+      {
+        label: "Save", cls: "primary", onClick: (el, close) => {
+          const d = $("#hDate", el).value, n = $("#hName", el).value.trim(), t = $("#hType", el).value;
+          if (!d || !n) { toast("Date and name are both required"); return; }
+          SETTINGS.holidays = (SETTINGS.holidays || []).filter(x => x.date !== d && (!h || x.date !== h.date));
+          SETTINGS.holidays.push({ date: d, name: n, type: t });
+          SETTINGS.holidays.sort((a, b) => a.date.localeCompare(b.date));
+          persistSet(); close(); drawHolidays(); toast("Saved");
+        }
+      }]
+  });
+}
+
+async function storageInfo() {
+  const el = $("#storeInfo"); if (!el) return;
+  const bytes = (localStorage.getItem(LS.rec) || "").length + (localStorage.getItem(LS.emp) || "").length;
+  let photos = 0, quota = "";
+  try { photos = (await PhotoDB.keys()).length; } catch (e) {}
+  if (navigator.storage && navigator.storage.estimate) {
+    try { const q = await navigator.storage.estimate(); quota = ` · ${(q.usage / 1048576).toFixed(1)} MB used of ~${(q.quota / 1048576).toFixed(0)} MB available`; } catch (e) {}
+  }
+  el.textContent = `${RECORDS.length} records · ${EMPLOYEES.length} employees · ${photos} photos · ${(bytes / 1024).toFixed(1)} KB of record data${quota}`;
+}
+
+/* ---------------- BACKUP ---------------- */
+function download(name, text, type = "application/json") {
+  const blob = new Blob([text], { type: type + ";charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+/** Everything in SETTINGS except the credentials. A backup gets emailed around,
+    dropped in Drive, and kept for years — it is the last place the shop's keys
+    and admin PIN should be sitting in plain text. Restoring keeps whatever
+    credentials the receiving device already has. */
+const SECRET_KEYS = ["syncSecret", "syncStaffSecret", "adminPin"];
+function settingsWithoutSecrets() {
+  const out = {};
+  Object.keys(SETTINGS).forEach(k => { if (SECRET_KEYS.indexOf(k) === -1) out[k] = SETTINGS[k]; });
+  return out;
+}
+async function doBackup(withPhotos) {
+  toast(withPhotos ? "Packing photos — this may take a moment…" : "Exporting…");
+  const data = {
+    v: 2, exportedAt: new Date().toISOString(),
+    note: "Keys and the admin PIN are deliberately excluded. Re-enter them in Settings after restoring.",
+    settings: settingsWithoutSecrets(),
+    employees: EMPLOYEES, records: RECORDS,
+    photos: withPhotos ? await PhotoDB.all() : null
+  };
+  download(`attendance-backup-${todayKey()}${withPhotos ? "-with-photos" : ""}.json`, JSON.stringify(data));
+  toast("Backup downloaded");
+}
+function restoreBackup(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const fr = new FileReader();
+  fr.onload = async () => {
+    let d; try { d = JSON.parse(fr.result); } catch (err) { toast("That file isn't a valid backup."); return; }
+    if (!d.employees || !d.records) { toast("Backup file is missing data."); return; }
+    confirmBox(`Restore <strong>${d.records.length} records</strong> and <strong>${d.employees.length} employees</strong> from ${esc((d.exportedAt || "").slice(0, 10))}? This <strong>replaces</strong> everything currently on this device.`, async () => {
+      EMPLOYEES = d.employees; RECORDS = d.records;
+      if (d.settings) {
+        // Keep this device's own credentials. A newer backup won't contain any,
+        // and an older one must not be allowed to overwrite a rotated key or
+        // silently reset the admin PIN back to whatever it was months ago.
+        const keep = {};
+        SECRET_KEYS.forEach(k => { keep[k] = SETTINGS[k]; });
+        SETTINGS = Object.assign({}, DEFAULT_SETTINGS, d.settings, keep);
+      }
+      persistEmp(); persistRec(); persistSet();
+      if (d.photos) { let n = 0; for (const [k, v] of Object.entries(d.photos)) { await PhotoDB.put(k, v); n++; } toast(`Restored with ${n} photos`); }
+      else toast("Restored (no photos in this backup)");
+      applyTheme(); renderTab(CUR_TAB);
+    }, "Restore");
+  };
+  fr.readAsText(f); e.target.value = "";
+}
+async function purgePhotos() {
+  modal({
+    title: "Purge old photos",
+    body: `<div class="field"><label class="f">Delete photos from entries older than</label>
+      <select id="pgDays"><option value="30">30 days</option><option value="60" selected>60 days</option><option value="90">90 days</option><option value="180">180 days</option></select></div>
+      <div class="note">Attendance records, hours and pay are kept — only the image files are removed. This frees up a lot of space.</div>`,
+    actions: [{ label: "Cancel" }, {
+      label: "Purge photos", cls: "danger", onClick: async (el, close) => {
+        const days = Number($("#pgDays", el).value); close();
+        const cutoff = dayKey(new Date(Date.now() - days * 86400000));
+        let n = 0;
+        for (const r of RECORDS) {
+          if (r.date < cutoff) {
+            if (r.inPhoto) { await PhotoDB.del(r.inPhoto); r.inPhoto = null; n++; }
+            if (r.outPhoto) { await PhotoDB.del(r.outPhoto); r.outPhoto = null; n++; }
+          }
+        }
+        persistRec(); storageInfo(); toast(`${n} photos removed`);
+      }
+    }]
+  });
+}
+
+/* ---------------- CSV ---------------- */
+function csv(rows) {
+  const cell = v => {
+    const s = String(v ?? "");
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return "﻿" + rows.map(r => r.map(cell).join(",")).join("\r\n");
+}
+function exportRecordsCsv() {
+  const list = filteredRecords();
+  if (!list.length) return toast("Nothing to export in this range.");
+  const rows = [["Date", "Day type", "Holiday", "Rate multiplier", "Employee", "Position", "Shift", "Time in", "Time out",
+    "Clocked hrs", "Scheduled hrs", "Paid hrs", "Regular hrs", "OT hrs", "Late (min)", "Early out (min)",
+    "Hourly rate", "Deduction", "Base pay", "Premium", "Gross pay", "Flags", "In location", "Out location", "In map link", "Out map link", "Note", "Edited"]];
+  list.slice().reverse().forEach(r => {
+    const e = empById(r.empId), c = computeShift(r, e, SETTINGS);
+    // spell out the date on a time-out that landed on a different day
+    const outTxt = !r.outAt ? "NO TIME OUT"
+      : fmtTime(r.outAt) + (dayKey(new Date(r.inAt)) === dayKey(new Date(r.outAt)) ? "" : " (" + dayKey(new Date(r.outAt)) + ")");
+    rows.push([
+      r.date, c.dayType, c.holidayName || "", c.mult, e?.name || "deleted", e?.role || "", c.shift || "", fmtTime(r.inAt), outTxt,
+      c.worked.toFixed(3), c.scheduled.toFixed(2), c.paid.toFixed(2), c.regular.toFixed(2), c.ot.toFixed(2), c.lateMin || 0, c.underMin || 0,
+      e?.rate ?? "", c.deduction ? (-c.deduction).toFixed(2) : "", c.base.toFixed(2), c.premium.toFixed(2), c.gross.toFixed(2), c.flags.join(" "),
+      r.inGeo ? `${r.inGeo.lat}, ${r.inGeo.lng} (±${r.inGeo.acc}m)` : "",
+      r.outGeo ? `${r.outGeo.lat}, ${r.outGeo.lng} (±${r.outGeo.acc}m)` : "",
+      mapLink(r.inGeo) || "", mapLink(r.outGeo) || "",
+      [r.inNote, r.outNote].filter(Boolean).join(" | "), r.edited ? "YES" : ""
+    ]);
+  });
+  download(`attendance-${RF.from}-to-${RF.to}.csv`, csv(rows), "text/csv");
+  toast("CSV downloaded");
+}
+function exportPayrollCsv() {
+  const rows = payrollData();
+  if (!rows.length) return toast("Nothing to export.");
+  const out = [[`Payroll ${PF.from} to ${PF.to}`], [],
+    ["Employee", "Position", "Hourly rate", "Days worked", "Scheduled hrs", "Late (min)", "Early out (min)", "Time deduction", "Paid hrs", "OT hrs",
+     "Basic pay", "OT pay", "Holiday premium", "Premium days", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Contributions", "NET PAY", "Unclosed shifts", "Needs fixing"]];
+  rows.forEach(r => out.push([
+    r.e.name, r.e.role || "", r.e.rate, r.days,
+    (r.reg + (r.e.rate ? r.deduction / r.e.rate : 0)).toFixed(2), r.lateMin, r.underMin, r.deduction ? (-r.deduction).toFixed(2) : "",
+    r.reg.toFixed(2), r.ot.toFixed(2),
+    (r.reg * r.e.rate).toFixed(2), (r.ot * r.e.rate * SETTINGS.otMultiplier).toFixed(2),
+    r.premium.toFixed(2), r.premDays, r.gross.toFixed(2),
+    r.sss.toFixed(2), r.phil.toFixed(2), r.pag.toFixed(2), r.ded.toFixed(2), r.net.toFixed(2), r.open, r.needsFix
+  ]));
+  const t = rows.reduce((a, r) => ({ g: a.g + r.gross, n: a.n + r.net, p: a.p + r.premium }), { g: 0, n: 0, p: 0 });
+  out.push([], ["TOTAL", "", "", "", "", "", "", "", "", "", "", "", t.p.toFixed(2), "", t.g.toFixed(2), "", "", "", "", t.n.toFixed(2)]);
+  download(`payroll-${PF.from}-to-${PF.to}.csv`, csv(out), "text/csv");
+  toast("Payroll CSV downloaded");
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+const CAME_FROM_LINK = applySetupLink();
+
+/* Older versions pulled records from the Sheet without noting where their photos
+   had ended up in Drive. Those records then look unsent, so a re-upload tries to
+   push every image all over again — slow, and the usual cause of a run dying with
+   "Server busy". The links are already in the record; just read the ids out. */
+(function backfillPhotoIds() {
+  let n = 0;
+  RECORDS.forEach(r => {
+    if (r.inPhotoUrl && !r.inPhotoDriveId) { r.inPhotoDriveId = driveIdFrom(r.inPhotoUrl); if (r.inPhotoDriveId) n++; }
+    if (r.outPhotoUrl && !r.outPhotoDriveId) { r.outPhotoDriveId = driveIdFrom(r.outPhotoUrl); if (r.outPhotoDriveId) n++; }
+  });
+  if (n) persistRec();
+})();
+
+applyTheme();
+renderEmpList();
+paintSyncBadges();
+$("#bigClock").textContent = fmtTime(Date.now());
+$("#bigDate").textContent = fmtDateLong(new Date());
+if (location.hash === "#admin") openAdmin();
+window.addEventListener("beforeunload", stopCam);
+
+/* On every load: pull the staff list and any open shifts, then send whatever
+   is still queued. This is what makes one link work across every device. */
+(async () => {
+  if (!Sync.on) return;
+  if (CAME_FROM_LINK) toast("Connecting to " + SETTINGS.orgName + "…", 3000);
+  const r = await Sync.kioskRefresh(CAME_FROM_LINK);
+  if (r && r.error) { if (CAME_FROM_LINK) toast("Couldn't reach the staff list: " + r.error, 5000); }
+  else if (r && !r.throttled) {
+    renderEmpList();
+    if (CAME_FROM_LINK) toast(`Ready — ${r.employees} staff loaded`, 3000);
+  }
+  Sync.flush(true);
+})();
+
+// Forgotten shifts are closed inside Sync.pull(), the one moment we know this
+// device is looking at the Sheet's own version of every record rather than a
+// stale local copy. Standalone devices have no Sheet to be out of step with.
+if (isTrulyAdminDevice() && !Sync.on) autoCloseStale();
+
+// refresh the roster when the kiosk comes back to the foreground
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden || !Sync.on) return;
+  const r = await Sync.kioskRefresh(false);
+  if (r && !r.throttled && !r.error && !$("#s-pick").classList.contains("hide")) renderEmpList();
+});
+
+// expose for testing
+window.__att = { computeShift, scheduleFor, shiftForRecord, parseSlot, rosterShifts, weekHours,
+  autoCloseStale, staleOpenRecords, periodsFor, distMeters, csv, Sync, deviceName, makeSetupLink, dropDemoStaff,
+  get SETTINGS() { return SETTINGS; }, get RECORDS() { return RECORDS; }, get EMPLOYEES() { return EMPLOYEES; } };
+
+/* Last line of the file. The damage detector at the top of <head> looks for this
+   flag on window load — if the upload was cut short, the script never reaches
+   here and the person gets told plainly instead of a screen full of CSS. */
+window.__attReady = true;
+</script>
+</body>
+</html>  .wrap{max-width:640px;margin:0 auto;padding:20px 16px 64px}
+  .wrap.admin{max-width:1180px}
+  h1,h2,h3{margin:0;font-weight:650;letter-spacing:-.01em}
+  a{color:var(--accent)}
+  .muted{color:var(--muted)}
+  .small{font-size:13px}
+  .tiny{font-size:12px}
+  .center{text-align:center}
+  .row{display:flex;gap:10px;align-items:center}
+  .row.wrap-r{flex-wrap:wrap}
+  .spread{display:flex;gap:10px;align-items:center;justify-content:space-between}
+  .grow{flex:1;min-width:0}
+  .hide{display:none !important}
+
+  /* ---------- Cards (Google-Forms style) ---------- */
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    box-shadow:var(--shadow);padding:22px;margin-bottom:14px;
+  }
+  .card.head{border-top:8px solid var(--accent);padding-top:24px}
+  .card.pad-sm{padding:16px}
+
+  /* ---------- Buttons ---------- */
+  button{font-family:inherit;font-size:16px}
+  .btn{
+    appearance:none;border:1px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:10px;padding:12px 18px;font-weight:600;cursor:pointer;
+    transition:.12s ease;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  }
+  .btn:hover{background:#f9fafb}
+  .btn:active{transform:translateY(1px)}
+  .btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+  .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn.primary:hover{background:var(--accent-dark)}
+  .btn.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  .btn.danger:hover{filter:brightness(.94)}
+  .btn.ghost{border-color:transparent;background:transparent;color:var(--muted)}
+  .btn.ghost:hover{background:#eef0f3}
+  .btn.block{width:100%}
+  .btn.lg{padding:18px 22px;font-size:17px;border-radius:12px}
+  .btn.sm{padding:7px 12px;font-size:13.5px;border-radius:8px}
+  .btn-row{display:flex;gap:10px}
+  .btn-row .btn{flex:1}
+
+  /* ---------- Inputs ---------- */
+  label.f{display:block;font-weight:600;font-size:14px;margin:0 0 6px}
+  input,select,textarea{
+    font-family:inherit;font-size:16px;width:100%;padding:11px 12px;
+    border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink);
+  }
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:var(--accent)}
+  .field{margin-bottom:14px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  @media(max-width:620px){.grid3{grid-template-columns:1fr 1fr}}
+  @media(max-width:420px){.grid2,.grid3{grid-template-columns:1fr}}
+
+  /* ---------- Employee picker ---------- */
+  .emp-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+  .emp{
+    display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+    padding:12px 14px;border:1px solid var(--line);border-radius:11px;background:#fff;cursor:pointer;
+    transition:.12s ease;
+  }
+  .emp:hover{border-color:var(--accent);background:var(--accent-soft)}
+  .avatar{
+    width:42px;height:42px;border-radius:50%;flex:none;display:grid;place-items:center;
+    background:var(--accent-soft);color:var(--accent-dark);font-weight:700;font-size:16px;letter-spacing:.5px;
+  }
+  .avatar.lg{width:56px;height:56px;font-size:20px}
+  .emp .nm{font-weight:600}
+  .pill{
+    display:inline-block;padding:3px 9px;border-radius:999px;font-size:11.5px;font-weight:700;
+    letter-spacing:.02em;white-space:nowrap;
+  }
+  .pill.in{background:var(--ok-soft);color:var(--ok)}
+  .pill.out{background:#eef0f3;color:var(--muted)}
+  .pill.warnp{background:var(--warn-soft);color:var(--warn)}
+  .pill.dangerp{background:var(--danger-soft);color:var(--danger)}
+
+  /* ---------- Camera ---------- */
+  .cam-shell{
+    position:relative;width:100%;aspect-ratio:3/4;max-height:52vh;background:#0b0f14;
+    border-radius:12px;overflow:hidden;display:grid;place-items:center;
+  }
+  .cam-shell video,.cam-shell img,.cam-shell canvas{width:100%;height:100%;object-fit:cover;display:block}
+  .cam-shell video{transform:scaleX(-1)}
+  .cam-msg{color:#cbd5e1;font-size:14px;padding:24px;text-align:center}
+  .shutter{
+    width:74px;height:74px;border-radius:50%;border:5px solid #fff;background:var(--accent);
+    cursor:pointer;display:grid;place-items:center;box-shadow:0 4px 16px rgba(0,0,0,.25);
+  }
+  .shutter:active{transform:scale(.94)}
+  .shutter span{width:26px;height:26px;border-radius:6px;background:#fff;display:block}
+
+  /* ---------- Status strip ---------- */
+  .strip{display:flex;gap:8px;align-items:center;padding:9px 12px;border-radius:9px;font-size:13.5px;font-weight:500}
+  .strip.ok{background:var(--ok-soft);color:var(--ok)}
+  .strip.wait{background:var(--warn-soft);color:var(--warn)}
+  .strip.err{background:var(--danger-soft);color:var(--danger)}
+  .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+  .dot.blink{animation:pulse 1.1s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.25}}
+
+  /* ---------- Clock ---------- */
+  .clock{font-size:44px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.1}
+
+  /* ---------- Success ---------- */
+  .check{
+    width:76px;height:76px;border-radius:50%;background:var(--ok-soft);color:var(--ok);
+    display:grid;place-items:center;margin:0 auto 14px;font-size:38px;font-weight:700;
+  }
+
+  /* ---------- Tables ---------- */
+  .tbl-scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:11px;background:#fff}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{padding:9px 11px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
+  th{background:#fafbfc;font-weight:650;font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);position:sticky;top:0;z-index:1}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:#fafbfc}
+  td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+  tfoot td{font-weight:700;background:#fafbfc;border-top:2px solid var(--line)}
+  .thumb{width:34px;height:34px;border-radius:7px;object-fit:cover;cursor:pointer;border:1px solid var(--line);display:block}
+  .thumb-ph{width:34px;height:34px;border-radius:7px;background:#f3f4f6;display:grid;place-items:center;color:#9ca3af;font-size:15px}
+
+  /* ---------- Admin chrome ---------- */
+  .topbar{background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:20}
+  .topbar-in{max-width:1180px;margin:0 auto;padding:12px 16px;display:flex;gap:12px;align-items:center;justify-content:space-between}
+  .tabs{display:flex;gap:4px;overflow-x:auto;padding:2px 0}
+  .tab{
+    padding:8px 14px;border-radius:9px;border:none;background:transparent;color:var(--muted);
+    font-weight:600;font-size:14px;cursor:pointer;white-space:nowrap;
+  }
+  .tab:hover{background:#f3f4f6;color:var(--ink)}
+  .tab.on{background:var(--accent-soft);color:var(--accent-dark)}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  @media(max-width:760px){.stat-grid{grid-template-columns:1fr 1fr}}
+  .stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:15px 16px;box-shadow:var(--shadow)}
+  .stat .k{font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:650}
+  .stat .v{font-size:26px;font-weight:700;letter-spacing:-.02em;margin-top:3px;font-variant-numeric:tabular-nums}
+  .sec-title{font-size:13px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin:0 0 10px}
+
+  /* ---------- Modal ---------- */
+  .overlay{
+    position:fixed;inset:0;background:rgba(10,15,20,.62);z-index:100;
+    display:flex;align-items:center;justify-content:center;padding:16px;
+  }
+  .modal{background:#fff;border-radius:14px;max-width:520px;width:100%;max-height:88vh;overflow:auto;box-shadow:0 20px 50px rgba(0,0,0,.3)}
+  .modal-h{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:#fff;border-radius:14px 14px 0 0}
+  .modal-b{padding:20px}
+  .modal-f{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;justify-content:flex-end;position:sticky;bottom:0;background:#fff}
+  .x{border:none;background:transparent;font-size:24px;line-height:1;color:var(--muted);cursor:pointer;padding:0 4px}
+  .lightbox img{max-width:min(94vw,520px);max-height:80vh;border-radius:12px;display:block}
+
+  /* ---------- Toast ---------- */
+  #toast{
+    position:fixed;left:50%;transform:translateX(-50%);bottom:26px;z-index:200;
+    background:var(--ink);color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;font-weight:500;
+    box-shadow:0 8px 24px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:.22s;max-width:90vw;
+  }
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(-4px)}
+
+  /* ---------- PIN pad ---------- */
+  .pinpad{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:280px;margin:0 auto}
+  .pinpad button{padding:16px;font-size:20px;font-weight:600;border:1px solid var(--line);background:#fff;border-radius:11px;cursor:pointer}
+  .pinpad button:active{background:var(--accent-soft)}
+  .pin-dots{display:flex;gap:12px;justify-content:center;margin:16px 0 20px}
+  .pin-dots i{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);display:block}
+  .pin-dots i.f{background:var(--accent);border-color:var(--accent)}
+
+  .empty{padding:44px 20px;text-align:center;color:var(--muted);font-size:14px}
+  .footer-link{text-align:center;padding:22px 0 8px;font-size:13px}
+  .steps{display:flex;gap:6px;justify-content:center;margin-bottom:14px}
+  .steps i{height:4px;width:34px;border-radius:2px;background:var(--line);display:block}
+  .steps i.on{background:var(--accent)}
+  .kv{display:flex;justify-content:space-between;gap:14px;padding:9px 0;border-bottom:1px solid var(--line);font-size:14.5px}
+  .kv:last-child{border-bottom:none}
+  .kv .k{color:var(--muted)}
+  .kv .v{font-weight:600;text-align:right}
+  .note{background:#f9fafb;border:1px solid var(--line);border-left:3px solid var(--accent);border-radius:8px;padding:11px 13px;font-size:13px;color:var(--muted)}
+  @media print{
+    .noprint{display:none !important}
+    body{background:#fff}
+    .card,.tbl-scroll{box-shadow:none;border-color:#ccc}
+  }
+</style>
 </head>
 <body>
 
