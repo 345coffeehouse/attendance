@@ -433,6 +433,7 @@ function hm(hours) {
   return m === 60 ? `${h + 1}h 00m` : `${h}h ${pad(m)}m`;
 }
 const todayKey = () => dayKey(new Date());
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ------------------------- storage ------------------------- */
 const LS = {
@@ -699,6 +700,32 @@ const Sync = {
     } finally { clearTimeout(t); }
   },
 
+  /**
+   * Same as call(), but rides out the transient failures.
+   *
+   * Google Apps Script serialises requests behind a script lock and refuses new
+   * ones while it's busy. Re-uploading the whole history fires twenty-odd
+   * batches in a row, so some are certain to arrive while the previous one is
+   * still writing. Those aren't errors, they're back-pressure — wait and retry
+   * rather than abandoning the run and making the person press the button again.
+   */
+  async callRetry(payload, timeoutMs = 45000, tries = 5) {
+    let wait = 1500;
+    for (let i = 1; ; i++) {
+      try {
+        return await this.call(payload, timeoutMs);
+      } catch (err) {
+        const busy = /busy|lock|timed out|timeout|abort|network|fetch|503|429/i.test(err.message || "");
+        if (!busy || i >= tries) throw err;
+        this.status = "sending";
+        this.lastError = `Google is busy — retrying (${i}/${tries - 1})`;
+        paintSyncBadges();
+        await sleep(wait);
+        wait = Math.min(wait * 2, 15000);   // 1.5s, 3s, 6s, 12s
+      }
+    }
+  },
+
   async ping() {
     return this.call({ action: "ping" }, 20000);
   },
@@ -743,6 +770,7 @@ const Sync = {
 
     this.status = "sending"; paintSyncBadges();
     const batchSize = SETTINGS.syncPhotos ? 4 : 25;   // photos make payloads big
+    const total = ids.length;
     let sent = 0;
     try {
       await this.pushEmployeesIfChanged();   // keep names + rates on the Sheet current
@@ -754,7 +782,7 @@ const Sync = {
           if (r) packed.push(await this.pack(r));
         }
         if (packed.length) {
-          const res = await this.call({ action: "push", records: packed, settings: SETTINGS });
+          const res = await this.callRetry({ action: "push", records: packed, settings: SETTINGS });
           (res.results || []).forEach(r => {
             const local = RECORDS.find(x => x.id === r.id);
             if (local) {
@@ -768,16 +796,25 @@ const Sync = {
         }
         ids = ids.slice(chunk.length);
         this.saveOutbox(ids);
+        // Let Google finish writing before the next batch lands. Without this the
+        // requests overlap, the script lock times out, and a long re-upload dies
+        // a third of the way through.
+        if (ids.length) {
+          if (!silent) this.lastError = `Uploading ${sent} of ${total}…`;
+          paintSyncBadges();
+          await sleep(600);
+        }
       }
       this.status = "ok"; this.lastError = "";
       this.lastSync = Date.now(); localStorage.setItem("att.lastSync", this.lastSync);
       if (!silent && sent) toast(`Synced ${sent} entr${sent === 1 ? "y" : "ies"} to Google Sheets`);
     } catch (err) {
-      this.status = "error"; this.lastError = err.message;
-      if (!silent) toast("Sync failed: " + err.message, 5000);
+      this.status = "error";
+      this.lastError = err.message + (sent ? ` · ${sent} of ${total} uploaded, the rest are still queued` : "");
+      if (!silent) toast("Sync stopped after " + sent + " of " + total + ": " + err.message + ". Press the button again to carry on where it left off.", 7000);
     }
     paintSyncBadges();
-    return { sent };
+    return { sent, total };
   },
 
   /** Admin only — the Sheet's roster is the master copy and staff can't rewrite it. */
@@ -877,6 +914,11 @@ const Sync = {
         inGeo: null, outGeo: null,
         inPhoto: null, outPhoto: null,
         inPhotoUrl: r.inPhotoUrl || "", outPhotoUrl: r.outPhotoUrl || "",
+        // Remember where the photos already live in Drive. Without this a
+        // re-upload thinks they were never sent and tries to push every image
+        // again — which is what turned "recompute the numbers" into a slow,
+        // failure-prone upload of the whole photo library.
+        inPhotoDriveId: driveIdFrom(r.inPhotoUrl), outPhotoDriveId: driveIdFrom(r.outPhotoUrl),
         inNote: r.inNote || "", outNote: "",
         restOverride: r.restOverride || null, otApproved: !!r.otApproved,
         otBlock: !!r.otBlock, shiftOverride: r.shiftOverride || null, autoClosed: !!r.autoClosed,
@@ -888,10 +930,11 @@ const Sync = {
           this.reconcileEmployee({ id: r.empId, name: r.empName, role: "", rate: 0, pin: "", active: true });
         }
         RECORDS.push(mapped); added++;
-      } else if (!local.outAt && r.outAt) {
-        local.outAt = r.outAt;
-        local.outPhotoUrl = r.outPhotoUrl || local.outPhotoUrl;
-        updated++;
+      } else {
+        // the Sheet is the master copy of the photos — record where they are
+        if (r.inPhotoUrl && !local.inPhotoDriveId) { local.inPhotoUrl = r.inPhotoUrl; local.inPhotoDriveId = driveIdFrom(r.inPhotoUrl); }
+        if (r.outPhotoUrl && !local.outPhotoDriveId) { local.outPhotoUrl = r.outPhotoUrl; local.outPhotoDriveId = driveIdFrom(r.outPhotoUrl); }
+        if (!local.outAt && r.outAt) { local.outAt = r.outAt; updated++; }
       }
     });
     persistRec(); persistEmp();
@@ -2627,11 +2670,22 @@ function renderSettings() {
   };
   $("#syncPushAll").onclick = async () => {
     if (needSaved()) return;
-    confirmBox(`Re-send all <strong>${RECORDS.length}</strong> records to the Sheet and recompute their pay? Rows are matched by ID and updated in place — nothing is duplicated. Use this after a pay-rule change to refresh every row.`, async () => {
+    confirmBox(`Re-send all <strong>${RECORDS.length}</strong> records to the Sheet and recompute their pay? Rows are matched by ID and updated in place — nothing is duplicated. Use this after a pay-rule change to refresh every row.<br><br>It goes in small batches with a pause between each, so Google doesn't get overwhelmed. Expect roughly a minute per 40 records. <strong>Leave this page open.</strong>`, async () => {
       Sync.saveOutbox(RECORDS.map(r => r.id));
-      msg("wait", "Uploading & recomputing… photos make this slow, please leave this page open.");
+      const btn = $("#syncPushAll"); btn.disabled = true;
+      // keep the count moving on screen — a long run with a frozen message looks hung
+      const tick = setInterval(() => {
+        const left = Sync.outbox().length;
+        msg("wait", `Uploading &amp; recomputing… <strong>${RECORDS.length - left}</strong> of ${RECORDS.length} done${Sync.lastError ? ` <span class="muted">· ${esc(Sync.lastError)}</span>` : ""}. Please leave this page open.`);
+      }, 700);
       const res = await Sync.flush(false);
-      msg(Sync.status === "error" ? "err" : "ok", Sync.status === "error" ? "Stopped: " + esc(Sync.lastError) + " — the rest stay queued and will retry." : `Re-sent and recomputed ${res.sent} record(s).`);
+      clearInterval(tick); btn.disabled = false;
+      const left = Sync.outbox().length;
+      if (Sync.status === "error") {
+        msg("err", `Stopped after <strong>${res.sent}</strong> of ${res.total}: ${esc(Sync.lastError)}.<br>The remaining <strong>${left}</strong> are still queued — press the button again and it picks up where it left off.`);
+      } else {
+        msg("ok", `Re-sent and recomputed <strong>${res.sent}</strong> record(s).`);
+      }
     }, "Recompute all");
   };
   $("#syncPullNow").onclick = async () => {
@@ -2836,6 +2890,20 @@ function exportPayrollCsv() {
    BOOT
    ===================================================================== */
 const CAME_FROM_LINK = applySetupLink();
+
+/* Older versions pulled records from the Sheet without noting where their photos
+   had ended up in Drive. Those records then look unsent, so a re-upload tries to
+   push every image all over again — slow, and the usual cause of a run dying with
+   "Server busy". The links are already in the record; just read the ids out. */
+(function backfillPhotoIds() {
+  let n = 0;
+  RECORDS.forEach(r => {
+    if (r.inPhotoUrl && !r.inPhotoDriveId) { r.inPhotoDriveId = driveIdFrom(r.inPhotoUrl); if (r.inPhotoDriveId) n++; }
+    if (r.outPhotoUrl && !r.outPhotoDriveId) { r.outPhotoDriveId = driveIdFrom(r.outPhotoUrl); if (r.outPhotoDriveId) n++; }
+  });
+  if (n) persistRec();
+})();
+
 applyTheme();
 renderEmpList();
 paintSyncBadges();
