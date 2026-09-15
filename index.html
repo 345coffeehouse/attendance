@@ -2449,7 +2449,7 @@ function drawPayroll() {
           <th>Employee</th><th class="num">Rate</th><th class="num">Days</th><th class="num">Paid hrs</th><th class="num">OT hrs</th>
           <th class="num">Basic pay</th><th class="num">OT pay</th><th class="num">Holiday premium</th><th class="num">Gross</th>
           ${hasDed ? `<th class="num">Contributions</th>` : ""}
-          <th class="num">Advances &amp; other</th><th class="num">Net pay</th>
+          <th class="num">Adjustments</th><th class="num">Net pay</th>
           <th class="num">Late / early</th><th class="noprint"></th>
         </tr></thead>
         <tbody>${rows.map(r => `<tr>
@@ -2464,7 +2464,7 @@ function drawPayroll() {
           <td class="num"><strong>${money(r.gross)}</strong></td>
           ${hasDed ? `<td class="num">${r.ded ? "−" + money(r.ded) : "—"}</td>` : ""}
           <td class="num">${r.adjSum
-            ? `<span style="color:var(--danger)" title="${esc(r.adj.map(a => a.label + " " + money(a.amount)).join(" · "))}">−${money(r.adjSum).slice(1)}</span><br><span class="tiny muted">${r.adj.length} item${r.adj.length > 1 ? "s" : ""}</span>`
+            ? `<span style="color:${r.adjSum < 0 ? "var(--ok)" : "var(--danger)"}" title="${esc(r.adj.map(a => `${a.label} ${a.amount < 0 ? "+" : "−"}${money(Math.abs(a.amount))}`).join(" · "))}">${r.adjSum < 0 ? "+" + money(-r.adjSum) : "−" + money(r.adjSum).slice(1)}</span><br><span class="tiny muted">${r.adj.length} item${r.adj.length > 1 ? "s" : ""}</span>`
             : "—"}</td>
           <td class="num"><strong>${money(r.net)}</strong></td>
           <td class="num">${r.lateMin || r.underMin ? `${r.lateMin || 0}m / ${r.underMin || 0}m` : "—"}</td>
@@ -2476,13 +2476,13 @@ function drawPayroll() {
           <td class="num">${t.premium ? "+" + money(t.premium) : "—"}</td>
           <td class="num">${money(t.gross)}</td>
           ${hasDed ? `<td class="num">−${money(t.ded)}</td>` : ""}
-          <td class="num">${t.adjSum ? "−" + money(t.adjSum).slice(1) : "—"}</td>
+          <td class="num">${t.adjSum ? (t.adjSum < 0 ? "+" + money(-t.adjSum) : "−" + money(t.adjSum).slice(1)) : "—"}</td>
           <td class="num"><strong>${money(t.net)}</strong></td>
           <td colspan="2"></td>
         </tr></tfoot>
       </table></div>
       <div class="note" style="margin-top:12px"><strong>Paid hrs</strong> is each person's rostered shift hours, less any minutes they arrived late or left early. It is not the raw time on the clock — Records shows both side by side if you want to compare.
-      <br><br><strong>Advances &amp; other</strong> is anything you've logged against that person for this period — a cash advance, breakages, whatever. Press <strong>Adjust</strong> on their row to add or remove one. Each item is itemised on their payslip.</div>
+      <br><br><strong>Adjustments</strong> is anything you've logged against that person for this period — a cash advance or breakages coming off, a bonus or tips share going on. Press <strong>Adjust</strong> on their row to add or remove one. Red comes off, green goes on, and each item is listed separately on their payslip.</div>
     </div>`;
   $$("#pOut [data-adj]").forEach(b => b.onclick = () => editAdjustments(b.dataset.adj));
 }
@@ -2504,23 +2504,30 @@ function editAdjustments(empId) {
           <td class="num" style="color:${a.amount < 0 ? "var(--ok)" : "var(--danger)"}">${a.amount < 0 ? "+" + money(-a.amount) : "−" + money(a.amount).slice(1)}</td>
           <td><button class="btn sm danger" data-del="${a.id}">Remove</button></td>
         </tr>`).join("")}</tbody>
-        <tfoot><tr><td colspan="2">Total coming off this payout</td>
+        <tfoot><tr><td colspan="2">${sum < 0 ? "Total added to this payout" : "Total coming off this payout"}</td>
           <td class="num"><strong>${sum < 0 ? "+" + money(-sum) : "−" + money(sum).slice(1)}</strong></td><td></td></tr></tfoot>
       </table></div>` : `<div class="empty">Nothing logged for this period.</div>`;
     $$("[data-del]", box).forEach(b => b.onclick = () => {
       const a = ADJUSTMENTS.find(x => x.id === b.dataset.del);
-      confirmBox(`Remove <strong>${esc(a.label)}</strong> (${money(a.amount)}) from ${esc(e.name)}'s payout?`, () => {
+      confirmBox(`Remove <strong>${esc(a.label)}</strong> (${money(Math.abs(a.amount))} ${a.amount < 0 ? "added to" : "taken off"}) from ${esc(e.name)}'s payout?`, () => {
         ADJUSTMENTS = ADJUSTMENTS.filter(x => x.id !== b.dataset.del);
         persistAdj(); Sync.pushAdjustments(); draw(); drawPayroll(); toast("Removed");
       }, "Remove");
     });
   };
   modal({
-    title: `Advances & deductions — ${e.name}`,
+    title: `Adjustments — ${e.name}`,
     wide: true,
     body: `<p class="small muted" style="margin-top:0">Pay period <strong>${per}</strong>. Anything dated inside it comes off this payout.</p>
       <div id="adjList"></div>
       <h3 class="sec-title" style="margin-top:18px">Add one</h3>
+      <div class="field">
+        <label class="f">Is this coming off their pay, or going on top?</label>
+        <select id="aKind">
+          <option value="take">Take OFF their pay — advance, breakages, anything owed</option>
+          <option value="give">ADD to their pay — bonus, tips share, allowance</option>
+        </select>
+      </div>
       <div class="grid3">
         <div class="field"><label class="f">Date</label><input type="date" id="aDate" value="${esc(PF.to)}" min="${esc(PF.from)}" max="${esc(PF.to)}"></div>
         <div class="field"><label class="f">What for</label><input id="aLabel" placeholder="Cash advance" list="aLabels">
@@ -2529,12 +2536,16 @@ function editAdjustments(empId) {
             <option value="Missing cups and lids"></option>
             <option value="Breakages"></option>
             <option value="Uniform"></option>
+            <option value="Bonus"></option>
+            <option value="Tips share"></option>
+            <option value="Transport allowance"></option>
+            <option value="Incentive"></option>
           </datalist></div>
         <div class="field"><label class="f">Amount (${SETTINGS.currency})</label><input type="number" id="aAmt" step="0.01" min="0" placeholder="0.00"></div>
       </div>
       <div class="field"><label class="f">Note <span class="muted" style="font-weight:400">(optional)</span></label><input id="aNote" placeholder="e.g. borrowed 3 Sept, agreed to settle this payday"></div>
       <div class="row"><button class="btn sm primary" id="aAdd">+ Add to this payout</button></div>
-      <div class="note" style="margin-top:12px">This comes straight off their net pay and appears as its own line on the payslip, so they can see exactly what was taken and why.</div>`,
+      <div class="note" style="margin-top:12px">Always type the amount as a plain positive number — the choice above decides which way it goes. Either way it appears as its own line on the payslip, so they can see exactly what changed and why.</div>`,
     actions: [{ label: "Done", cls: "primary" }]
   });
   setTimeout(() => {
@@ -2543,18 +2554,20 @@ function editAdjustments(empId) {
     $("#aAdd", el).onclick = () => {
       const date = $("#aDate", el).value;
       const label = $("#aLabel", el).value.trim();
-      const amount = Number($("#aAmt", el).value);
+      const typed = Math.abs(Number($("#aAmt", el).value));
+      const give = $("#aKind", el).value === "give";
       if (!date) { toast("Pick a date"); return; }
       if (!label) { toast("Say what it's for"); return; }
-      if (!amount) { toast("Enter an amount"); return; }
+      if (!typed) { toast("Enter an amount"); return; }
+      // stored signed: positive comes off the payout, negative goes on top
       ADJUSTMENTS.push({
-        id: uid(), empId, date, label, amount,
+        id: uid(), empId, date, label, amount: give ? -typed : typed,
         note: $("#aNote", el).value.trim(), createdAt: Date.now()
       });
       persistAdj(); Sync.pushAdjustments();
       $("#aLabel", el).value = ""; $("#aAmt", el).value = ""; $("#aNote", el).value = "";
       draw(); drawPayroll();
-      toast(`${label} — ${money(amount)} added to ${e.name}'s payout`);
+      toast(`${label} — ${money(typed)} ${give ? "added to" : "taken off"} ${e.name}'s payout`);
     };
   }, 40);
 }
