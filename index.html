@@ -518,6 +518,8 @@ const SCRIPT_NEEDS = [
   { id: "auto-close", label: "forgotten clock-out handling" },
   { id: "sort", label: "sorting the Sheet by date" },
   { id: "holiday-rates", label: "your holiday rates" },
+  { id: "undelete", label: "undoing a deleted record" },
+  { id: "adjustments", label: "cash advances and deductions" },
 ];
 
 /* ------------------------- storage ------------------------- */
@@ -525,6 +527,7 @@ const LS = {
   emp: "att.employees.v1",
   rec: "att.records.v1",
   set: "att.settings.v1",
+  adj: "att.adjustments.v1",
 };
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
@@ -625,6 +628,23 @@ const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 let SETTINGS = Object.assign({}, DEFAULT_SETTINGS, load(LS.set, {}));
 let EMPLOYEES = load(LS.emp, null);
 let RECORDS = load(LS.rec, []);
+
+/* Pay adjustments — cash advances, breakages, anything with a label and a peso
+   amount that comes off someone's payout.
+     { id, empId, date, label, amount, note, createdAt, void }
+   `date` is what decides which pay period it lands in, so an advance taken on
+   the 3rd is deducted from the period containing the 3rd. `amount` is what gets
+   taken off; a negative amount adds to pay instead, which is how a bonus or an
+   allowance would be recorded if you ever want one. */
+let ADJUSTMENTS = load(LS.adj, []);
+const persistAdj = () => save(LS.adj, ADJUSTMENTS);
+/** Every live adjustment for one person inside a date range. */
+function adjustmentsFor(empId, from, to) {
+  return ADJUSTMENTS
+    .filter(a => !a.void && a.empId === empId && (!from || a.date >= from) && (!to || a.date <= to))
+    .sort((a, b) => a.date.localeCompare(b.date) || (a.createdAt || 0) - (b.createdAt || 0));
+}
+const adjTotal = list => list.reduce((n, a) => n + Number(a.amount || 0), 0);
 
 /* "Preview as staff" — lets a real admin see what a staff device sees,
    without touching the stored syncRole or keys. Lives in sessionStorage only,
@@ -963,6 +983,18 @@ const Sync = {
     } catch (e) { /* non-critical — retried on the next flush */ }
   },
 
+  /**
+   * Save the advances and deductions to the Sheet. Admin only — they're only
+   * ever entered there, so the device is the master and the Sheet is the copy
+   * that survives a lost laptop. Quiet by design: it runs after every edit and
+   * a failure is retried on the next one rather than interrupting the person.
+   */
+  async pushAdjustments() {
+    if (!this.on || !isAdminDevice()) return;
+    try { await this.call({ action: "pushAdjustments", adjustments: ADJUSTMENTS }); }
+    catch (e) { console.warn("adjustments not saved to the Sheet yet:", e.message); }
+  },
+
   /** Upload the roster only when it has actually changed. */
   async pushEmployeesIfChanged() {
     if (!this.on || !isAdminDevice()) return;
@@ -1074,6 +1106,17 @@ const Sync = {
         if (!local.outAt && r.outAt) { local.outAt = r.outAt; updated++; }
       }
     });
+    // Advances and deductions: the Sheet wins, since it's the one copy that
+    // outlives any single device. Anything entered here and not yet saved up
+    // is kept, so a pull can't silently wipe an advance logged seconds ago.
+    if (Array.isArray(res.adjustments)) {
+      const fromSheet = new Set(res.adjustments.map(a => a.id));
+      const unsent = ADJUSTMENTS.filter(a => !fromSheet.has(a.id));
+      ADJUSTMENTS = res.adjustments.map(a => Object.assign({ createdAt: Date.now() }, a)).concat(unsent);
+      persistAdj();
+      if (unsent.length) this.pushAdjustments();
+    }
+
     persistRec(); persistEmp();
     this.lastSync = Date.now(); localStorage.setItem("att.lastSync", this.lastSync);
     // We have just seen the Sheet's own version of every record, so anything
@@ -2266,7 +2309,29 @@ function editRecord(id) {
       </div>
       <div class="note">Off by default, so time past the end of the shift pays nothing and just carries an <strong>OT?</strong> flag. Tick it when you actually asked them to stay, and those extra hours get paid. Clocking in <em>early</em> is never overtime — the shift starts when the roster says it starts.</div>`,
     actions: [
-      ...(isNew ? [] : [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox("Delete this entry permanently? Photos will be removed too, on this device and in the Google Sheet.", async () => { PhotoDB.del(r.inPhoto); PhotoDB.del(r.outPhoto); RECORDS = RECORDS.filter(x => x.id !== r.id); Sync.saveOutbox(Sync.outbox().filter(x => x !== r.id)); persistRec(); renderTab(CUR_TAB); toast("Entry deleted"); if (Sync.on) { try { await Sync.call({ action: "delete", id: r.id }); } catch (e) { toast("Deleted here, but couldn't remove it from the Sheet: " + e.message, 5000); } } }); } }]),
+      ...(isNew ? [] : [{
+        label: "Delete", cls: "danger", onClick: (el, close) => {
+          close();
+          const e2 = empById(r.empId);
+          confirmBox(
+            `Delete <strong>${esc(e2?.name || "this entry")}</strong> on <strong>${fmtDateShort(r.date)}</strong>?`
+            + (Sync.on
+              ? `<br><br>It moves to the <strong>Deleted</strong> tab in your Sheet, so you can put it back from Settings → <em>Recently deleted</em>. Photos stay in Drive.`
+              : `<br><br>⚠️ This device isn't connected to a Google Sheet, so this <strong>cannot be undone</strong>. The photos go too.`),
+            async () => {
+              PhotoDB.del(r.inPhoto); PhotoDB.del(r.outPhoto);
+              RECORDS = RECORDS.filter(x => x.id !== r.id);
+              Sync.saveOutbox(Sync.outbox().filter(x => x !== r.id));
+              persistRec(); renderTab(CUR_TAB);
+              if (Sync.on) {
+                try {
+                  const res = await Sync.call({ action: "delete", id: r.id });
+                  toast(res.archived ? "Deleted — recoverable from Settings → Recently deleted" : "Deleted", 5000);
+                } catch (e) { toast("Deleted here, but couldn't remove it from the Sheet: " + e.message, 5000); }
+              } else toast("Entry deleted");
+            }, "Delete");
+        }
+      }]),
       { label: "Cancel" },
       {
         label: "Save", cls: "primary", onClick: (el, close) => {
@@ -2340,7 +2405,8 @@ function payrollData() {
   const rows = [];
   EMPLOYEES.forEach(e => {
     const recs = RECORDS.filter(r => r.empId === e.id && r.date >= PF.from && r.date <= PF.to);
-    if (!recs.length) return;
+    // someone with no shifts but an outstanding deduction still belongs on the run
+    if (!recs.length && !adjustmentsFor(e.id, PF.from, PF.to).length) return;
     const days = new Set(), agg = { reg: 0, ot: 0, gross: 0, base: 0, premium: 0, lateMin: 0, underMin: 0, deduction: 0, open: 0, needsFix: 0, shifts: 0, premDays: 0 };
     recs.forEach(r => {
       const c = computeShift(r, e, SETTINGS);
@@ -2356,7 +2422,10 @@ function payrollData() {
     const phil = agg.gross * (Number(SETTINGS.philhealthRate) || 0) / 100;
     const pag = Number(SETTINGS.pagibigFixed) || 0;
     const ded = sss + phil + pag;
-    rows.push({ e, days: days.size, ...agg, sss, phil, pag, ded, net: agg.gross - ded });
+    // cash advances, breakages and anything else you've logged against them
+    const adj = adjustmentsFor(e.id, PF.from, PF.to);
+    const adjSum = adjTotal(adj);
+    rows.push({ e, days: days.size, ...agg, sss, phil, pag, ded, adj, adjSum, net: agg.gross - ded - adjSum });
   });
   return rows.sort((a, b) => a.e.name.localeCompare(b.e.name));
 }
@@ -2364,7 +2433,7 @@ function drawPayroll() {
   const rows = payrollData();
   const hasDed = (Number(SETTINGS.sssRate) || Number(SETTINGS.philhealthRate) || Number(SETTINGS.pagibigFixed)) > 0;
   if (!rows.length) { $("#pOut").innerHTML = `<div class="card"><div class="empty">No attendance in ${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}.</div></div>`; return; }
-  const t = rows.reduce((a, r) => ({ days: a.days + r.days, reg: a.reg + r.reg, ot: a.ot + r.ot, gross: a.gross + r.gross, premium: a.premium + r.premium, ded: a.ded + r.ded, net: a.net + r.net }), { days: 0, reg: 0, ot: 0, gross: 0, premium: 0, ded: 0, net: 0 });
+  const t = rows.reduce((a, r) => ({ days: a.days + r.days, reg: a.reg + r.reg, ot: a.ot + r.ot, gross: a.gross + r.gross, premium: a.premium + r.premium, ded: a.ded + r.ded, adjSum: a.adjSum + r.adjSum, net: a.net + r.net }), { days: 0, reg: 0, ot: 0, gross: 0, premium: 0, ded: 0, adjSum: 0, net: 0 });
   const openWarn = rows.reduce((a, r) => a + r.open, 0);
   const fixWarn = rows.reduce((a, r) => a + r.needsFix, 0);
   $("#pOut").innerHTML = `
@@ -2379,8 +2448,9 @@ function drawPayroll() {
         <thead><tr>
           <th>Employee</th><th class="num">Rate</th><th class="num">Days</th><th class="num">Paid hrs</th><th class="num">OT hrs</th>
           <th class="num">Basic pay</th><th class="num">OT pay</th><th class="num">Holiday premium</th><th class="num">Gross</th>
-          ${hasDed ? `<th class="num">Contributions</th><th class="num">Net pay</th>` : ""}
-          <th class="num">Late / early</th>
+          ${hasDed ? `<th class="num">Contributions</th>` : ""}
+          <th class="num">Advances &amp; other</th><th class="num">Net pay</th>
+          <th class="num">Late / early</th><th class="noprint"></th>
         </tr></thead>
         <tbody>${rows.map(r => `<tr>
           <td><strong>${esc(r.e.name)}</strong><br><span class="tiny muted">${esc(r.e.role || "Staff")}</span></td>
@@ -2392,20 +2462,101 @@ function drawPayroll() {
           <td class="num">${r.ot ? money(r.ot * r.e.rate * SETTINGS.otMultiplier) : "—"}</td>
           <td class="num">${r.premium ? `+${money(r.premium)}<br><span class="tiny muted">${r.premDays} day${r.premDays > 1 ? "s" : ""}</span>` : "—"}</td>
           <td class="num"><strong>${money(r.gross)}</strong></td>
-          ${hasDed ? `<td class="num">${r.ded ? "−" + money(r.ded) : "—"}</td><td class="num"><strong>${money(r.net)}</strong></td>` : ""}
+          ${hasDed ? `<td class="num">${r.ded ? "−" + money(r.ded) : "—"}</td>` : ""}
+          <td class="num">${r.adjSum
+            ? `<span style="color:var(--danger)" title="${esc(r.adj.map(a => a.label + " " + money(a.amount)).join(" · "))}">−${money(r.adjSum).slice(1)}</span><br><span class="tiny muted">${r.adj.length} item${r.adj.length > 1 ? "s" : ""}</span>`
+            : "—"}</td>
+          <td class="num"><strong>${money(r.net)}</strong></td>
           <td class="num">${r.lateMin || r.underMin ? `${r.lateMin || 0}m / ${r.underMin || 0}m` : "—"}</td>
+          <td class="noprint"><button class="btn sm" data-adj="${r.e.id}">Adjust</button></td>
         </tr>`).join("")}</tbody>
         <tfoot><tr>
           <td>TOTAL (${rows.length})</td><td></td><td class="num">${t.days}</td>
           <td class="num">${t.reg.toFixed(2)}</td><td class="num">${t.ot.toFixed(2)}</td><td></td><td></td>
           <td class="num">${t.premium ? "+" + money(t.premium) : "—"}</td>
           <td class="num">${money(t.gross)}</td>
-          ${hasDed ? `<td class="num">−${money(t.ded)}</td><td class="num">${money(t.net)}</td>` : ""}
-          <td></td>
+          ${hasDed ? `<td class="num">−${money(t.ded)}</td>` : ""}
+          <td class="num">${t.adjSum ? "−" + money(t.adjSum).slice(1) : "—"}</td>
+          <td class="num"><strong>${money(t.net)}</strong></td>
+          <td colspan="2"></td>
         </tr></tfoot>
       </table></div>
-      <div class="note" style="margin-top:12px"><strong>Paid hrs</strong> is each person's rostered shift hours, less any minutes they arrived late or left early. It is not the raw time on the clock — Records shows both side by side if you want to compare.</div>
+      <div class="note" style="margin-top:12px"><strong>Paid hrs</strong> is each person's rostered shift hours, less any minutes they arrived late or left early. It is not the raw time on the clock — Records shows both side by side if you want to compare.
+      <br><br><strong>Advances &amp; other</strong> is anything you've logged against that person for this period — a cash advance, breakages, whatever. Press <strong>Adjust</strong> on their row to add or remove one. Each item is itemised on their payslip.</div>
     </div>`;
+  $$("#pOut [data-adj]").forEach(b => b.onclick = () => editAdjustments(b.dataset.adj));
+}
+
+/* ---------------- cash advances & other deductions ---------------- */
+function editAdjustments(empId) {
+  const e = empById(empId); if (!e) return;
+  const per = `${fmtDateShort(PF.from)} – ${fmtDateShort(PF.to)}`;
+  const draw = () => {
+    const list = adjustmentsFor(empId, PF.from, PF.to);
+    const sum = adjTotal(list);
+    const el = $("#modalRoot .overlay:last-child");
+    const box = $("#adjList", el); if (!box) return;
+    box.innerHTML = list.length ? `<div class="tbl-scroll"><table>
+        <thead><tr><th>Date</th><th>What for</th><th class="num">Amount</th><th></th></tr></thead>
+        <tbody>${list.map(a => `<tr>
+          <td>${fmtDateShort(a.date)}</td>
+          <td><strong>${esc(a.label)}</strong>${a.note ? `<br><span class="tiny muted">${esc(a.note)}</span>` : ""}</td>
+          <td class="num" style="color:${a.amount < 0 ? "var(--ok)" : "var(--danger)"}">${a.amount < 0 ? "+" + money(-a.amount) : "−" + money(a.amount).slice(1)}</td>
+          <td><button class="btn sm danger" data-del="${a.id}">Remove</button></td>
+        </tr>`).join("")}</tbody>
+        <tfoot><tr><td colspan="2">Total coming off this payout</td>
+          <td class="num"><strong>${sum < 0 ? "+" + money(-sum) : "−" + money(sum).slice(1)}</strong></td><td></td></tr></tfoot>
+      </table></div>` : `<div class="empty">Nothing logged for this period.</div>`;
+    $$("[data-del]", box).forEach(b => b.onclick = () => {
+      const a = ADJUSTMENTS.find(x => x.id === b.dataset.del);
+      confirmBox(`Remove <strong>${esc(a.label)}</strong> (${money(a.amount)}) from ${esc(e.name)}'s payout?`, () => {
+        ADJUSTMENTS = ADJUSTMENTS.filter(x => x.id !== b.dataset.del);
+        persistAdj(); Sync.pushAdjustments(); draw(); drawPayroll(); toast("Removed");
+      }, "Remove");
+    });
+  };
+  modal({
+    title: `Advances & deductions — ${e.name}`,
+    wide: true,
+    body: `<p class="small muted" style="margin-top:0">Pay period <strong>${per}</strong>. Anything dated inside it comes off this payout.</p>
+      <div id="adjList"></div>
+      <h3 class="sec-title" style="margin-top:18px">Add one</h3>
+      <div class="grid3">
+        <div class="field"><label class="f">Date</label><input type="date" id="aDate" value="${esc(PF.to)}" min="${esc(PF.from)}" max="${esc(PF.to)}"></div>
+        <div class="field"><label class="f">What for</label><input id="aLabel" placeholder="Cash advance" list="aLabels">
+          <datalist id="aLabels">
+            <option value="Cash advance"></option>
+            <option value="Missing cups and lids"></option>
+            <option value="Breakages"></option>
+            <option value="Uniform"></option>
+          </datalist></div>
+        <div class="field"><label class="f">Amount (${SETTINGS.currency})</label><input type="number" id="aAmt" step="0.01" min="0" placeholder="0.00"></div>
+      </div>
+      <div class="field"><label class="f">Note <span class="muted" style="font-weight:400">(optional)</span></label><input id="aNote" placeholder="e.g. borrowed 3 Sept, agreed to settle this payday"></div>
+      <div class="row"><button class="btn sm primary" id="aAdd">+ Add to this payout</button></div>
+      <div class="note" style="margin-top:12px">This comes straight off their net pay and appears as its own line on the payslip, so they can see exactly what was taken and why.</div>`,
+    actions: [{ label: "Done", cls: "primary" }]
+  });
+  setTimeout(() => {
+    const el = $("#modalRoot .overlay:last-child");
+    draw();
+    $("#aAdd", el).onclick = () => {
+      const date = $("#aDate", el).value;
+      const label = $("#aLabel", el).value.trim();
+      const amount = Number($("#aAmt", el).value);
+      if (!date) { toast("Pick a date"); return; }
+      if (!label) { toast("Say what it's for"); return; }
+      if (!amount) { toast("Enter an amount"); return; }
+      ADJUSTMENTS.push({
+        id: uid(), empId, date, label, amount,
+        note: $("#aNote", el).value.trim(), createdAt: Date.now()
+      });
+      persistAdj(); Sync.pushAdjustments();
+      $("#aLabel", el).value = ""; $("#aAmt", el).value = ""; $("#aNote", el).value = "";
+      draw(); drawPayroll();
+      toast(`${label} — ${money(amount)} added to ${e.name}'s payout`);
+    };
+  }, 40);
 }
 function showPayslips() {
   const rows = payrollData();
@@ -2428,6 +2579,7 @@ function showPayslips() {
       ${r.sss ? `<div class="kv"><span class="k">SSS</span><span class="v">−${money(r.sss)}</span></div>` : ""}
       ${r.phil ? `<div class="kv"><span class="k">PhilHealth</span><span class="v">−${money(r.phil)}</span></div>` : ""}
       ${r.pag ? `<div class="kv"><span class="k">Pag-IBIG</span><span class="v">−${money(r.pag)}</span></div>` : ""}
+      ${r.adj.map(a => `<div class="kv"><span class="k">${esc(a.label)}${a.note ? ` <span style="font-size:11px;color:#999">(${esc(a.note)})</span>` : ""}</span><span class="v">${a.amount < 0 ? "+" + money(-a.amount) : "−" + money(a.amount)}</span></div>`).join("")}
       <div class="kv" style="border-top:2px solid #333"><span class="k"><strong>NET PAY</strong></span><span class="v" style="font-size:17px">${money(r.net)}</span></div>
     </div>`).join("");
   modal({ title: "Payslips · " + per, wide: true, body: html, actions: [{ label: "Print", cls: "primary", onClick: () => printHtml("Payslips — " + per, html) }] });
@@ -2736,6 +2888,7 @@ function renderSettings() {
         <button class="btn sm" id="syncPushAll">⬆ Re-upload &amp; recompute all</button>
         <button class="btn sm" id="syncPullNow">⬇ Pull from Sheet</button>
         <button class="btn sm" id="syncSort">↕ Sort the Sheet by date</button>
+        <button class="btn sm" id="syncBin">🗑 Recently deleted</button>
         <button class="btn sm" id="syncOpen">Open the Sheet</button>
       </div>
       <div id="syncMsg" class="small" style="margin-top:12px"></div>
@@ -2930,6 +3083,51 @@ function renderSettings() {
         ? " — your Google script is still the old version. Paste the new Code.gs and redeploy as a New version." : ""));
     }
   };
+  $("#syncBin").onclick = async () => {
+    if (needSaved()) return;
+    msg("wait", "Checking the bin…");
+    let list;
+    try {
+      const r = await Sync.callRetry({ action: "listDeleted" });
+      list = r.records || [];
+    } catch (e) {
+      msg("err", "Couldn't read the bin: " + esc(e.message) + (/cannot do that|Unknown action/i.test(e.message)
+        ? " — your Google script is an older version. Paste the new Code.gs and redeploy as a New version." : ""));
+      return;
+    }
+    msg("ok", `The bin holds ${list.length} deleted record(s).`);
+    modal({
+      title: "Recently deleted",
+      wide: true,
+      body: list.length ? `<div class="tbl-scroll"><table>
+          <thead><tr><th>Employee</th><th>Date</th><th>Time in</th><th>Time out</th><th class="num">Pay</th><th>Deleted</th><th></th></tr></thead>
+          <tbody>${list.map(r => `<tr>
+            <td><strong>${esc(r.empName)}</strong></td>
+            <td>${esc(r.date)}</td>
+            <td>${esc(r.timeIn)}</td>
+            <td>${esc(r.timeOut)}</td>
+            <td class="num">${r.gross ? money(r.gross) : "—"}</td>
+            <td><span class="tiny muted">${r.deletedAt ? fmtDateShort(dayKey(new Date(r.deletedAt))) + " · " : ""}${esc(r.deletedBy)}</span></td>
+            <td><button class="btn sm primary" data-undel="${esc(r.id)}">Restore</button></td>
+          </tr>`).join("")}</tbody></table></div>
+          <div class="note" style="margin-top:12px">Restoring puts the row back in the Attendance tab exactly as it was, photos and map links included. Then press <strong>⬇ Pull from Sheet</strong> to bring it back onto this device.</div>`
+        : `<div class="empty">Nothing has been deleted.</div>`,
+      actions: [{ label: "Close" }]
+    });
+    setTimeout(() => {
+      const el = $("#modalRoot .overlay:last-child");
+      if (!el) return;
+      $$("[data-undel]", el).forEach(b => b.onclick = async () => {
+        b.disabled = true; b.textContent = "Restoring…";
+        try {
+          await Sync.callRetry({ action: "restore", id: b.dataset.undel });
+          b.closest("tr").style.opacity = ".4";
+          b.textContent = "Restored";
+          toast("Restored — press ⬇ Pull from Sheet to bring it back here", 5000);
+        } catch (e) { b.disabled = false; b.textContent = "Restore"; toast("Couldn't restore: " + e.message, 5000); }
+      });
+    }, 40);
+  };
   $("#syncOpen").onclick = () => {
     if (SETTINGS.syncSheetUrl) window.open(SETTINGS.syncSheetUrl, "_blank");
     else msg("wait", "Press <strong>Test connection</strong> once and the link will appear here.");
@@ -3038,7 +3236,7 @@ async function doBackup(withPhotos) {
     v: 2, exportedAt: new Date().toISOString(),
     note: "Keys and the admin PIN are deliberately excluded. Re-enter them in Settings after restoring.",
     settings: settingsWithoutSecrets(),
-    employees: EMPLOYEES, records: RECORDS,
+    employees: EMPLOYEES, records: RECORDS, adjustments: ADJUSTMENTS,
     photos: withPhotos ? await PhotoDB.all() : null
   };
   download(`attendance-backup-${todayKey()}${withPhotos ? "-with-photos" : ""}.json`, JSON.stringify(data));
@@ -3052,6 +3250,8 @@ function restoreBackup(e) {
     if (!d.employees || !d.records) { toast("Backup file is missing data."); return; }
     confirmBox(`Restore <strong>${d.records.length} records</strong> and <strong>${d.employees.length} employees</strong> from ${esc((d.exportedAt || "").slice(0, 10))}? This <strong>replaces</strong> everything currently on this device.`, async () => {
       EMPLOYEES = d.employees; RECORDS = d.records;
+      ADJUSTMENTS = Array.isArray(d.adjustments) ? d.adjustments : [];
+      persistAdj();
       if (d.settings) {
         // Keep this device's own credentials. A newer backup won't contain any,
         // and an older one must not be allowed to overwrite a rotated key or
@@ -3128,17 +3328,22 @@ function exportPayrollCsv() {
   if (!rows.length) return toast("Nothing to export.");
   const out = [[`Payroll ${PF.from} to ${PF.to}`], [],
     ["Employee", "Position", "Hourly rate", "Days worked", "Scheduled hrs", "Late (min)", "Early out (min)", "Time deduction", "Paid hrs", "OT hrs",
-     "Basic pay", "OT pay", "Holiday premium", "Premium days", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Contributions", "NET PAY", "Unclosed shifts", "Needs fixing"]];
+     "Basic pay", "OT pay", "Holiday premium", "Premium days", "Gross pay", "SSS", "PhilHealth", "Pag-IBIG", "Contributions",
+     "Advances & other", "Details", "NET PAY", "Unclosed shifts", "Needs fixing"]];
   rows.forEach(r => out.push([
     r.e.name, r.e.role || "", r.e.rate, r.days,
     (r.reg + (r.e.rate ? r.deduction / r.e.rate : 0)).toFixed(2), r.lateMin, r.underMin, r.deduction ? (-r.deduction).toFixed(2) : "",
     r.reg.toFixed(2), r.ot.toFixed(2),
     (r.reg * r.e.rate).toFixed(2), (r.ot * r.e.rate * SETTINGS.otMultiplier).toFixed(2),
     r.premium.toFixed(2), r.premDays, r.gross.toFixed(2),
-    r.sss.toFixed(2), r.phil.toFixed(2), r.pag.toFixed(2), r.ded.toFixed(2), r.net.toFixed(2), r.open, r.needsFix
+    r.sss.toFixed(2), r.phil.toFixed(2), r.pag.toFixed(2), r.ded.toFixed(2),
+    r.adjSum ? (-r.adjSum).toFixed(2) : "",
+    r.adj.map(a => `${a.date} ${a.label} ${Number(a.amount).toFixed(2)}`).join(" | "),
+    r.net.toFixed(2), r.open, r.needsFix
   ]));
-  const t = rows.reduce((a, r) => ({ g: a.g + r.gross, n: a.n + r.net, p: a.p + r.premium }), { g: 0, n: 0, p: 0 });
-  out.push([], ["TOTAL", "", "", "", "", "", "", "", "", "", "", "", t.p.toFixed(2), "", t.g.toFixed(2), "", "", "", "", t.n.toFixed(2)]);
+  const t = rows.reduce((a, r) => ({ g: a.g + r.gross, n: a.n + r.net, p: a.p + r.premium, adj: a.adj + r.adjSum }), { g: 0, n: 0, p: 0, adj: 0 });
+  out.push([], ["TOTAL", "", "", "", "", "", "", "", "", "", "", "", t.p.toFixed(2), "", t.g.toFixed(2), "", "", "", "",
+    t.adj ? (-t.adj).toFixed(2) : "", "", t.n.toFixed(2)]);
   download(`payroll-${PF.from}-to-${PF.to}.csv`, csv(out), "text/csv");
   toast("Payroll CSV downloaded");
 }
@@ -3198,7 +3403,9 @@ document.addEventListener("visibilitychange", async () => {
 // expose for testing
 window.__att = { computeShift, scheduleFor, shiftForRecord, parseSlot, rosterShifts, weekHours,
   autoCloseStale, staleOpenRecords, periodsFor, distMeters, csv, Sync, deviceName, makeSetupLink, dropDemoStaff,
-  get SETTINGS() { return SETTINGS; }, get RECORDS() { return RECORDS; }, get EMPLOYEES() { return EMPLOYEES; } };
+  adjustmentsFor, adjTotal,
+  get SETTINGS() { return SETTINGS; }, get RECORDS() { return RECORDS; },
+  get EMPLOYEES() { return EMPLOYEES; }, get ADJUSTMENTS() { return ADJUSTMENTS; } };
 
 /* Last line of the file. The damage detector at the top of <head> looks for this
    flag on window load — if the upload was cut short, the script never reaches
