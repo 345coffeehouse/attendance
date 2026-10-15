@@ -2733,7 +2733,21 @@ function editEmp(id) {
       <div id="fSched"></div>
       <div class="note" style="margin-top:12px">Hourly rate × their scheduled hours is what they earn. Arriving late or leaving early is deducted per minute; staying past the end time is overtime and pays nothing until you approve it.</div>`,
     actions: [
-      ...(e ? [{ label: "Delete", cls: "danger", onClick: (el, close) => { close(); confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, () => { EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id); persistEmp(); renderTab(CUR_TAB); toast("Employee deleted"); }); } }] : []),
+      ...(e ? [{
+        label: "Delete", cls: "danger", onClick: (el, close) => {
+          close();
+          confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, async () => {
+            EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id);
+            persistEmp();
+            // Saving an employee pushed the roster; deleting one did not, so the
+            // Sheet kept them and the next sync pulled them straight back —
+            // deleting the same person over and over with nothing sticking.
+            await Sync.pushEmployees();
+            renderTab(CUR_TAB);
+            toast(Sync.on ? "Deleted here and in the Sheet" : "Employee deleted");
+          });
+        }
+      }] : []),
       { label: "Cancel" },
       {
         label: "Save", cls: "primary", onClick: (el, close) => {
