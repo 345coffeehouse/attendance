@@ -977,6 +977,15 @@ const Sync = {
   /** Admin only — the Sheet's roster is the master copy and staff can't rewrite it. */
   async pushEmployees() {
     if (!this.on || !isAdminDevice()) return;
+    // A device that has lost its local data holds nothing but the three sample
+    // staff. Uploading that replaces the real roster in the Sheet — rates, PINs
+    // and schedules gone, and payroll quietly computes zero. The Sheet is the
+    // master copy of the roster: never overwrite it from a device that plainly
+    // doesn't know what the roster is.
+    if (!EMPLOYEES.length || EMPLOYEES.some(e => e.demo)) {
+      console.warn("roster upload refused — this device is still showing sample staff");
+      return;
+    }
     try {
       await this.call({ action: "pushEmployees", employees: EMPLOYEES });
       localStorage.setItem("att.rosterHash", rosterHash());
@@ -1998,8 +2007,11 @@ $("#btnSyncNow").onclick = async () => {
   if (!Sync.on) { toast("Set up Google Sheets sync in Settings first."); return; }
   const b = $("#btnSyncNow"); b.disabled = true; b.textContent = "⟳ Syncing…";
   try {
-    await Sync.flush(false);
+    // DOWNLOAD BEFORE UPLOAD. This used to be the other way round, which meant
+    // a device that had lost its local data uploaded its empty roster over the
+    // real one before ever seeing it. Learn what's there first, then send.
     const r = await Sync.pull();
+    await Sync.flush(false);
     toast(`Up to date — ${r.added} new, ${r.updated} completed, ${r.total} total in the Sheet`, 4000);
     renderTab(CUR_TAB);
   } catch (e) { toast("Sync failed: " + e.message, 5000); }
@@ -2229,19 +2241,30 @@ function drawRecordTable() {
       <td>${ph(r.outPhoto, r.outPhotoUrl, (e?.name || "") + " — time out")}</td>
       <td>${r.outAt ? fmtTime(r.outAt) + " " + geo(r.outGeo) : `<span class="pill warnp">OPEN</span>`}</td>
       <td>${c.shift ? `<span class="tiny">${esc(c.shift)}</span>` : `<span class="muted tiny">—</span>`}</td>
-      <td class="num" title="Actual time between clocking in and out">${c.worked ? c.worked.toFixed(2) : "—"}</td>
-      <td class="num" title="Hours they are paid for, before overtime">${c.regular ? c.regular.toFixed(2) : "—"}</td>
-      <td class="num">${c.ot ? c.ot.toFixed(2) : "—"}</td>
-      <td class="num">${c.deduction ? `<span style="color:var(--danger)">−${money(c.deduction).slice(1)}</span>` : "—"}</td>
+      <td class="num" title="Actual time between clocking in and out — ${hm(c.worked)}">${c.worked ? c.worked.toFixed(2) : "—"}</td>
+      <td class="num" title="Hours paid, before overtime — ${hm(c.regular)}${e ? ` × ${money(e.rate)} = ${money(c.regular * e.rate)}` : ""}">${c.regular ? c.regular.toFixed(2) : "—"}</td>
+      <td class="num" title="${c.ot ? `${hm(c.ot)} of approved overtime. The exact figure is ${c.ot.toFixed(4)} hrs${e ? ` × ${money(e.rate)} = ${money(c.ot * e.rate)}` : ""} — checking by hand, use the minutes, not the rounded 2-decimal figure shown here.` : "No overtime"}">${c.ot ? c.ot.toFixed(2) : "—"}</td>
+      <td class="num">${c.deduction
+        ? `<span style="color:var(--danger)" title="What the ${c.lateMin ? c.lateMin + " late" : ""}${c.lateMin && c.underMin ? " + " : ""}${c.underMin ? c.underMin + " early-out" : ""} minutes cost. ALREADY taken out of the Pay figure — don't subtract it again.">−${money(c.deduction).slice(1)}</span>`
+        : "—"}</td>
       <td class="num">${c.premium ? money(c.premium) : "—"}</td>
-      <td class="num">${c.gross ? money(c.gross) : "—"}</td>
+      <td class="num" title="${c.gross && e ? [
+          `${hm(c.regular)} (${c.regular.toFixed(4)}) × ${money(e.rate)} = ${money(c.regular * e.rate * c.mult)}`,
+          c.ot ? `${hm(c.ot)} (${c.ot.toFixed(4)}) OT × ${money(e.rate)} = ${money(c.ot * e.rate * c.mult)}` : "",
+          c.mult !== 1 ? `${Math.round(c.mult * 100)}% ${c.dayType}` : "",
+          `TOTAL ${money(c.gross)}`
+        ].filter(Boolean).join("\n") : "Nothing payable"}">${c.gross ? money(c.gross) : "—"}</td>
       <td>${flags.join(" ") || ""}</td>
       <td class="noprint"><button class="btn sm" data-edit="${r.id}">Edit</button></td>
     </tr>`;
   }).join("");
   $("#rTable").innerHTML = `<div class="tbl-scroll"><table>
     <thead><tr><th>Date</th><th>Employee</th><th>📷</th><th>Time in</th><th>📷</th><th>Time out</th><th>Shift</th>
-    <th class="num">Clocked</th><th class="num">Paid hrs</th><th class="num">OT</th><th class="num">Deduction</th><th class="num">Premium</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
+    <th class="num" title="Raw time between clocking in and out. Not what pay is based on.">Clocked</th>
+    <th class="num" title="The rostered shift, less any late or early-out minutes. This is what drives the pay.">Paid hrs</th>
+    <th class="num">OT</th>
+    <th class="num" title="What the late / early minutes cost — already included in the Pay column, not taken off it again.">Deduction</th>
+    <th class="num">Premium</th><th class="num">Pay</th><th>Flags</th><th class="noprint"></th></tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr><td colspan="7">${list.length} entries</td><td class="num">${tH.toFixed(2)}</td><td class="num">${tReg.toFixed(2)}</td><td class="num">${tOt.toFixed(2)}</td><td class="num">${tDed ? "−" + money(tDed).slice(1) : "—"}</td><td class="num">${tPrem ? money(tPrem) : "—"}</td><td class="num">${money(tP)}</td><td colspan="2"></td></tr></tfoot>
   </table></div>`;
@@ -2271,6 +2294,7 @@ function editRecord(id) {
         <div class="field"><label class="f">Time in</label><input type="datetime-local" id="eIn" value="${toLocalInput(r?.inAt) || toLocalInput(Date.now())}"></div>
         <div class="field"><label class="f">Time out <span class="muted" style="font-weight:400">(blank = still in)</span></label><input type="datetime-local" id="eOut" value="${toLocalInput(r?.outAt)}"></div>
       </div>
+      <div id="eSpan"></div>
       <div class="field"><label class="f">Note</label><input id="eNote" value="${esc(r?.inNote || "")}" placeholder="e.g. covering for Allen"></div>
       <div class="field">
         <label class="f">Day type <span class="muted" style="font-weight:400">(for swaps &amp; cover shifts)</span></label>
@@ -2359,6 +2383,44 @@ function editRecord(id) {
         }
       }]
   });
+
+  /* Typing a time out while leaving its DATE on today silently creates a
+     28-hour shift. Show the span as it's typed, and shout when it can't be
+     real — catching it here beats discovering it in the payroll run. */
+  setTimeout(() => {
+    const el = $("#modalRoot .overlay:last-child"); if (!el) return;
+    const inEl = $("#eIn", el), outEl = $("#eOut", el), span = $("#eSpan", el);
+    const draw = () => {
+      const a = inEl.value ? new Date(inEl.value).getTime() : null;
+      const b = outEl.value ? new Date(outEl.value).getTime() : null;
+      if (!a || !b) { span.innerHTML = ""; return; }
+      const hrs = (b - a) / 3600000;
+      const sameDay = inEl.value.slice(0, 10) === outEl.value.slice(0, 10);
+      if (hrs <= 0) {
+        span.innerHTML = `<div class="strip err"><span class="dot"></span>Time out is before time in — check the dates.</div>`;
+      } else if (hrs > (SETTINGS.maxShiftHours || 16)) {
+        span.innerHTML = `<div class="strip err"><span class="dot"></span>
+          That's <strong>${hm(hrs)}</strong> — longer than a full day, so this will pay nothing until it's corrected.
+          The dates are <strong>${inEl.value.slice(0, 10)}</strong> and <strong>${outEl.value.slice(0, 10)}</strong>;
+          did you mean them to be the same day?
+          <button class="btn sm" id="eSameDay" style="margin-left:8px">Use the same day</button></div>`;
+        const b2 = $("#eSameDay", el);
+        if (b2) b2.onclick = () => { outEl.value = inEl.value.slice(0, 10) + outEl.value.slice(10); draw(); };
+      } else {
+        span.innerHTML = `<div class="strip ok"><span class="dot"></span>${hm(hrs)} on the clock${sameDay ? "" : " · spans two dates (an overnight shift)"}</div>`;
+      }
+    };
+    // a blank time out starts on the same date as the time in, not today
+    inEl.oninput = () => {
+      if (outEl.value && outEl.value.slice(0, 10) < inEl.value.slice(0, 10)) {
+        outEl.value = inEl.value.slice(0, 10) + outEl.value.slice(10);
+      }
+      draw();
+    };
+    outEl.oninput = draw;
+    outEl.onfocus = () => { if (!outEl.value && inEl.value) outEl.value = inEl.value; };
+    draw();
+  }, 50);
   return m;
 }
 
