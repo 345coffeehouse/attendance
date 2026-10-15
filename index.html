@@ -982,8 +982,13 @@ const Sync = {
     // and schedules gone, and payroll quietly computes zero. The Sheet is the
     // master copy of the roster: never overwrite it from a device that plainly
     // doesn't know what the roster is.
-    if (!EMPLOYEES.length || EMPLOYEES.some(e => e.demo)) {
-      console.warn("roster upload refused — this device is still showing sample staff");
+    // ONLY sample staff means this device has lost its data and knows nothing.
+    // A roster that merely CONTAINS a sample alongside real people is a roster
+    // mid-cleanup — refusing that blocks the very deletions that remove them,
+    // so they come back on every sync and can never be got rid of.
+    const onlySamples = EMPLOYEES.length > 0 && EMPLOYEES.every(e => e.demo);
+    if (!EMPLOYEES.length || onlySamples) {
+      console.warn("roster upload refused — this device only has sample staff");
       return;
     }
     try {
