@@ -521,6 +521,7 @@ const SCRIPT_NEEDS = [
   { id: "undelete", label: "undoing a deleted record" },
   { id: "adjustments", label: "cash advances and deductions" },
   { id: "roster-guard", label: "protection against the roster being wiped" },
+  { id: "pay-rules", label: "shared pay rules, so every device agrees" },
 ];
 
 /* ------------------------- storage ------------------------- */
@@ -577,7 +578,6 @@ const DEFAULT_SETTINGS = {
   breakMinutes: 0,
   breakAfterHours: 5,
   roundToMinutes: 1,
-  gracePeriodMin: 0,           // free minutes before lateness is charged. 0 = none.
   shiftStart: "08:00",
   shiftEnd: "17:00",
   maxShiftHours: 16,
@@ -659,26 +659,42 @@ function setPreviewStaff(on) {
   location.reload();
 }
 
-/* Sample staff exist only so a brand-new install isn't an empty screen.
-   A device opened through a staff setup link skips them entirely, and they
-   are cleared automatically the moment a real roster arrives from the Sheet. */
+/* NO SAMPLE STAFF. A new install starts empty and says so.
+ *
+ * There used to be three invented employees here — Juan Dela Cruz, Maria
+ * Santos, Ana Reyes — so a brand-new install wasn't a blank screen. That
+ * cosmetic touch cost a real shop its roster: a laptop whose browser storage
+ * had been cleared fell back to those three, uploaded them, and wiped the
+ * master list of names, rates and schedules. They then reappeared after every
+ * sync and took days to be rid of.
+ *
+ * An empty screen with a sentence explaining what to do is strictly better
+ * than data the app invented about people who do not exist. */
 const ARRIVED_VIA_LINK = /[#&]s=/.test(location.hash || "");
-if (!EMPLOYEES) {
-  EMPLOYEES = ARRIVED_VIA_LINK ? [] : [
-    { id: uid(), name: "Juan Dela Cruz", role: "Barista",  rate: 90,  pin: "1111", active: true, demo: true },
-    { id: uid(), name: "Maria Santos",   role: "Barista",  rate: 90,  pin: "2222", active: true, demo: true },
-    { id: uid(), name: "Ana Reyes",      role: "Shift Lead", rate: 110, pin: "3333", active: true, demo: true },
-  ];
-  save(LS.emp, EMPLOYEES);
-  save(LS.set, SETTINGS);
-}
+if (!EMPLOYEES) { EMPLOYEES = []; save(LS.emp, EMPLOYEES); save(LS.set, SETTINGS); }
 
-/** Drop leftover sample staff once the real roster is known. */
+/** The three names the old versions invented. Exact matches only. */
+const SAMPLE_NAMES = ["Juan Dela Cruz", "Maria Santos", "Ana Reyes"];
+
+/**
+ * Clear out sample staff left behind by an older version — permanently.
+ *
+ * Deleting them by hand never stuck, because the Sheet kept its copy and the
+ * next sync put them back. So: remove them here AND tell the Sheet, in one go.
+ * Anyone who has actually clocked in is never touched, however they are named.
+ */
 function dropDemoStaff() {
   const before = EMPLOYEES.length;
-  EMPLOYEES = EMPLOYEES.filter(e => !e.demo || RECORDS.some(r => r.empId === e.id));
-  if (EMPLOYEES.length !== before) persistEmp();
-  return before - EMPLOYEES.length;
+  EMPLOYEES = EMPLOYEES.filter(e =>
+    !(e.demo || SAMPLE_NAMES.indexOf(String(e.name || "").trim()) !== -1)
+    || RECORDS.some(r => r.empId === e.id));
+  const removed = before - EMPLOYEES.length;
+  if (removed) {
+    persistEmp();
+    // the step that was missing before — without this they come straight back
+    if (Sync.on && isAdminDevice()) Sync.pushEmployees();
+  }
+  return removed;
 }
 
 const persistEmp = () => save(LS.emp, EMPLOYEES);
@@ -875,7 +891,7 @@ const Sync = {
     return {
       standardHours: s.standardHours, otMultiplier: s.otMultiplier, otMinMinutes: s.otMinMinutes,
       breakMinutes: s.breakMinutes, breakAfterHours: s.breakAfterHours,
-      roundToMinutes: s.roundToMinutes, gracePeriodMin: s.gracePeriodMin,
+      roundToMinutes: s.roundToMinutes,
       maxShiftHours: s.maxShiftHours, deductUndertime: s.deductUndertime, detectSwaps: s.detectSwaps,
       holidayPremiums: s.holidayPremiums, regularHolidayMult: s.regularHolidayMult,
       specialHolidayMult: s.specialHolidayMult, holidays: s.holidays || []
@@ -1004,6 +1020,20 @@ const Sync = {
    * that survives a lost laptop. Quiet by design: it runs after every edit and
    * a failure is retried on the next one rather than interrupting the person.
    */
+  /**
+   * Save the pay rules to the Sheet so every device uses the same ones.
+   *
+   * These used to live only in the browser they were typed into. Two laptops
+   * could therefore produce two different payrolls from identical clock-ins —
+   * one rounding to the nearest 15 minutes, one not — and the payout is taken
+   * from whichever screen happened to be open.
+   */
+  async pushPayRules() {
+    if (!this.on || !isAdminDevice()) return;
+    try { await this.call({ action: "pushPayRules", rules: this.payRules() }); }
+    catch (e) { console.warn("pay rules not saved to the Sheet yet:", e.message); }
+  },
+
   async pushAdjustments() {
     if (!this.on || !isAdminDevice()) return;
     try { await this.call({ action: "pushAdjustments", adjustments: ADJUSTMENTS }); }
@@ -1118,9 +1148,46 @@ const Sync = {
         // the Sheet is the master copy of the photos — record where they are
         if (r.inPhotoUrl && !local.inPhotoDriveId) { local.inPhotoUrl = r.inPhotoUrl; local.inPhotoDriveId = driveIdFrom(r.inPhotoUrl); }
         if (r.outPhotoUrl && !local.outPhotoDriveId) { local.outPhotoUrl = r.outPhotoUrl; local.outPhotoDriveId = driveIdFrom(r.outPhotoUrl); }
-        if (!local.outAt && r.outAt) { local.outAt = r.outAt; updated++; }
+
+        /* THE SHEET WINS, unless this device has an edit of its own waiting.
+         *
+         * This used to only fill in a MISSING time out, never correct one that
+         * was already there. So once two laptops disagreed about a shift they
+         * disagreed for ever: each kept its own version through every sync, and
+         * the two payrolls quietly differed. A record sitting in the outbox is
+         * one this device has changed and not yet sent — that keeps its local
+         * version until it pushes. Everything else takes the Sheet's. */
+        const pending = this.outbox().includes(r.id);
+        if (!pending) {
+          const changed = local.inAt !== r.inAt || local.outAt !== r.outAt
+            || !!local.otApproved !== !!r.otApproved || !!local.otBlock !== !!r.otBlock
+            || (local.restOverride || null) !== (r.restOverride || null)
+            || !!local.autoClosed !== !!r.autoClosed;
+          if (changed) {
+            local.inAt = r.inAt; local.outAt = r.outAt;
+            local.date = r.date;
+            local.otApproved = !!r.otApproved; local.otBlock = !!r.otBlock;
+            local.restOverride = r.restOverride || null;
+            local.shiftOverride = r.shiftOverride || local.shiftOverride || null;
+            local.autoClosed = !!r.autoClosed;
+            local.edited = r.edited;
+            updated++;
+          }
+        }
       }
     });
+    /* The Sheet's pay rules win. Every device computing the same figures from
+       the same clock-ins matters more than any one laptop's local preference —
+       a quiet disagreement here shows up as a different payout. */
+    if (res.payRules) {
+      const before = JSON.stringify(this.payRules());
+      Object.assign(SETTINGS, res.payRules);
+      if (JSON.stringify(this.payRules()) !== before) {
+        persistSet();
+        toast("Pay rules updated from the Sheet", 4000);
+      }
+    }
+
     // Advances and deductions: the Sheet wins, since it's the one copy that
     // outlives any single device. Anything entered here and not yet saved up
     // is kept, so a pull can't silently wipe an advance logged seconds ago.
@@ -1355,7 +1422,6 @@ function computeShift(rec, emp, st, employees) {
   const std = st.standardHours || 8;
   const step = Math.max(1, st.roundToMinutes || 1) / 60;
   const rate = Number((emp && emp.rate) || 0);
-  const grace = Math.max(0, st.gracePeriodMin || 0);
 
   // A shift longer than the daily maximum is a forgotten clock-out, not a marathon.
   // Refuse to pay it and shout, rather than quietly settling on the standard day.
@@ -1405,11 +1471,11 @@ function computeShift(rec, emp, st, employees) {
     const endMs = startMs + sched.hours * 3600000;
     out.scheduled = sched.hours;
 
-    const lateMs = rec.inAt - startMs - grace * 60000;
+    const lateMs = rec.inAt - startMs;
     if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
 
     if (st.deductUndertime !== false) {
-      const underMs = endMs - rec.outAt - grace * 60000;
+      const underMs = endMs - rec.outAt;
       if (underMs > 0) { out.underMin = Math.round(underMs / 60000); out.flags.push("undertime"); }
     }
 
@@ -1600,7 +1666,8 @@ function renderEmpList() {
       : Sync.on
         ? `<div class="empty">Waiting for the staff list…<br><span class="tiny">If this doesn't fill in, ask May to open Settings and press <strong>⟳ Sync</strong>.</span>
              <div style="margin-top:14px"><button class="btn sm" id="retryRoster">Try again</button></div></div>`
-        : `<div class="empty">No employees yet. Add them from the Admin dashboard.</div>`;
+        : `<div class="empty">No staff on this device yet.<br>
+             <span class="tiny">Open <strong>Admin dashboard</strong> below, then either connect this device to your Google Sheet in Settings, or add people in the Employees tab.</span></div>`;
     const retry = $("#retryRoster", el);
     if (retry) retry.onclick = async () => {
       retry.disabled = true; retry.textContent = "Checking…";
@@ -2075,7 +2142,7 @@ function renderDash() {
           <div class="small muted">Someone forgot to time out. These earn ₱0 until you fix them in Records.</div>
           <div class="small" style="margin-top:6px">${openOld.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)}`).join(" · ")}</div>
         </div>
-        <button class="btn sm" onclick="renderTabFromDash('records')">Fix</button>
+        <button class="btn sm" onclick="renderTabFromDash('records')">Show me</button>
       </div>
     </div>` : ""}
 
@@ -2099,7 +2166,10 @@ function renderDash() {
           <div class="small muted">Someone timed in and didn't time out until days later, so the clock can't be trusted. ${broken.length > 1 ? "They pay" : "It pays"} ₱0 until the real times are entered.</div>
           <div class="small" style="margin-top:6px">${broken.slice(0, 6).map(r => `${esc(empById(r.empId)?.name || "?")} — ${fmtDateShort(r.date)} (${((r.outAt - r.inAt) / 3600000).toFixed(0)} hrs)`).join(" · ")}</div>
         </div>
-        <button class="btn sm" onclick="renderTabFromDash('records')">Fix</button>
+        <div class="row" style="gap:6px">
+          <button class="btn sm" onclick="renderTabFromDash('records')">Show me</button>
+          <button class="btn sm primary" id="dashCloseBroken">Close at rostered end</button>
+        </div>
       </div>
     </div>` : ""}
 
@@ -2126,6 +2196,44 @@ function renderDash() {
       ${liveBoard(active, tk)}
     </div>`;
   $("#dashAdd").onclick = () => editRecord(null);
+
+  /* "Fix" used to just switch to the Records tab. It never fixed anything, so
+     the same four shifts came back every single time — the only thing that
+     changed was which tab you were looking at.
+     This actually resolves them: the time IN is real (a photo was taken), the
+     time OUT is nonsense, so the nonsense is replaced with the rostered end
+     time and marked AUTO-CLOSED. The shift pays properly and stays correctable
+     if anyone remembers the real finishing time. */
+  const closeBroken = $("#dashCloseBroken");
+  if (closeBroken) closeBroken.onclick = () => {
+    const lines = broken.slice(0, 8).map(r => {
+      const e = empById(r.empId);
+      const sched = shiftForRecord(r, e, SETTINGS, EMPLOYEES);
+      const endMs = (!sched.off && sched.hours)
+        ? anchorMs(r.inAt, hhmmToMin(sched.start)) + sched.hours * 3600000
+        : r.inAt + (SETTINGS.standardHours || 8) * 3600000;
+      return `${esc(e?.name || "?")} — ${fmtDateShort(r.date)}: out at <strong>${fmtTime(Math.max(r.inAt, endMs))}</strong>`;
+    }).join("<br>");
+    confirmBox(
+      `Replace the untrustworthy time out on <strong>${broken.length}</strong> shift${broken.length > 1 ? "s" : ""} with the rostered end time?`
+      + `<br><br>${lines}${broken.length > 8 ? `<br>…and ${broken.length - 8} more` : ""}`
+      + `<br><br>They'll pay normally instead of ₱0, and each one is marked <strong>AUTO-CLOSED</strong> so you can still put the real time in if anyone remembers it. The time in is untouched.`,
+      () => {
+        broken.forEach(r => {
+          const sched = shiftForRecord(r, empById(r.empId), SETTINGS, EMPLOYEES);
+          const endMs = (!sched.off && sched.hours)
+            ? anchorMs(r.inAt, hhmmToMin(sched.start)) + sched.hours * 3600000
+            : r.inAt + (SETTINGS.standardHours || 8) * 3600000;
+          r.outAt = Math.max(r.inAt, endMs);
+          r.autoClosed = true;
+          r.outNote = (r.outNote ? r.outNote + " · " : "") + "Closed at the rostered end — the recorded time out was impossible";
+          Sync.queue(r.id);
+        });
+        persistRec(); Sync.flush(true); renderTab(CUR_TAB);
+        toast(`${broken.length} shift${broken.length > 1 ? "s" : ""} closed at the rostered end`, 5000);
+      }, "Close them");
+  };
+
   const clearAuto = $("#dashClearAuto");
   if (clearAuto) clearAuto.onclick = () => confirmBox(
     `Clear the AUTO-CLOSED mark from <strong>${closedForThem.length}</strong> shift${closedForThem.length > 1 ? "s" : ""}? The times stay exactly as they are — this only says you've checked them.`,
@@ -2217,7 +2325,7 @@ function drawRecordTable() {
     const e = empById(r.empId); const c = computeShift(r, e, SETTINGS);
     tH += c.worked; tOt += c.ot; tP += c.gross; tPrem += c.premium; tReg += c.regular; tDed += c.deduction;
     const flags = [];
-    if (c.flags.includes("open")) flags.push(`<span class="pill warnp">NO TIME OUT</span>`);
+    if (c.flags.includes("open")) flags.push(`<span class="pill warnp" title="No time out was ever tapped, so this pays nothing. Ask the person what time they finished — do not guess. A typed time becomes the official record on every device and changes their pay.">NO TIME OUT</span>`);
     if (c.flags.includes("late")) flags.push(`<span class="pill warnp" title="Arrived ${c.lateMin} min after the ${esc(c.shift)} shift started — deducted per minute">${c.lateMin}m LATE</span>`);
     if (c.flags.includes("undertime")) flags.push(`<span class="pill warnp" title="Left ${c.underMin} min before the ${esc(c.shift)} shift ended — deducted per minute">${c.underMin}m EARLY</span>`);
     if (c.flags.includes("ot-block")) flags.push(`<span class="pill out" title="A second block clocked after their shift had already finished. Counted entirely as overtime.">OT BLOCK</span>`);
@@ -2225,7 +2333,7 @@ function drawRecordTable() {
     if (c.flags.includes("ot-pending")) flags.push(`<span class="pill warnp" title="Stayed past the end of the scheduled shift, but overtime isn't approved so it isn't paid. Open Edit and tick 'Approve overtime' if you asked them to stay.">OT?</span>`);
     if (c.flags.includes("swap")) flags.push(`<span class="pill out" title="Clocked in for the ${esc(c.shift)} shift, not the one their roster shows. Pay and lateness follow the shift they actually worked.">SWAP → ${esc(c.shift)}</span>`);
     if (c.flags.includes("auto-closed")) flags.push(`<span class="pill dangerp" title="They never clocked out. The shift was closed at its scheduled end time — check it and enter the real time.">AUTO-CLOSED</span>`);
-    if (c.flags.includes("needs-fix")) flags.push(`<span class="pill dangerp" title="This shift runs longer than the daily maximum, so somebody forgot to clock out. It pays nothing until the times are corrected.">FIX TIMES · UNPAID</span>`);
+    if (c.flags.includes("needs-fix")) flags.push(`<span class="pill dangerp" title="This shift runs longer than the daily maximum, so somebody forgot to clock out. It pays nothing until the times are corrected. Ask the person what time they actually finished — a guessed time becomes the official record everywhere and changes their pay.">FIX TIMES · UNPAID</span>`);
     if (c.flags.includes("no-schedule")) flags.push(`<span class="pill out" title="No shift set for this person on this day, so pay falls back to the clock. Set their weekly schedule in the Employees tab.">NO SHIFT SET</span>`);
     if (c.flags.includes("no-end-time")) flags.push(`<span class="pill warnp" title="Their roster has a start time but no end time for this day, so the standard day was assumed. Set the end time in Employees.">NO END TIME</span>`);
     if (c.flags.includes("holiday")) flags.push(`<span class="pill dangerp" title="${esc(c.holidayName)} · ${esc(c.dayType)}">${Math.round(c.mult * 100)}%</span>`);
@@ -2291,15 +2399,33 @@ function toLocalInput(ts) {
 function editRecord(id) {
   const r = id ? RECORDS.find(x => x.id === id) : null;
   const isNew = !r;
+
+  /* What may be edited, and what may not.
+     ------------------------------------
+     A time with a PHOTO behind it is evidence: the selfie was taken at the
+     moment the button was tapped. Retyping it replaces a fact with a guess,
+     which is how a real 9 PM finish became a typed-in 3:30 PM and cost
+     someone four hours' pay. Those are locked.
+
+     A time with NO photo was never tapped — it is either empty, or a time
+     the app filled in itself when it auto-closed a forgotten shift. The
+     app's own guess must stay correctable, or an auto-close at 5 PM would
+     permanently overwrite a 9 PM finish and nobody could put it right. */
+  const hasPhoto = (p, url) => !!(p || url);
+  const inLocked = !isNew && !!r.inAt && hasPhoto(r.inPhoto, r.inPhotoUrl);
+  const outLocked = !isNew && !!r.outAt && !r.autoClosed && hasPhoto(r.outPhoto, r.outPhotoUrl);
+
   const m = modal({
     title: isNew ? "Add manual entry" : "Edit entry",
     body: `
       <div class="field"><label class="f">Employee</label>
         <select id="eEmp">${EMPLOYEES.map(e => `<option value="${e.id}" ${r && r.empId === e.id ? "selected" : ""}>${esc(e.name)}</option>`).join("")}</select></div>
       <div class="grid2">
-        <div class="field"><label class="f">Time in</label><input type="datetime-local" id="eIn" value="${toLocalInput(r?.inAt) || toLocalInput(Date.now())}"></div>
-        <div class="field"><label class="f">Time out <span class="muted" style="font-weight:400">(blank = still in)</span></label><input type="datetime-local" id="eOut" value="${toLocalInput(r?.outAt)}"></div>
+        <div class="field"><label class="f">Time in${inLocked ? ` <span class="muted" style="font-weight:400">(locked)</span>` : ""}</label><input type="datetime-local" id="eIn" value="${toLocalInput(r?.inAt) || toLocalInput(Date.now())}"${inLocked ? " readonly disabled" : ""}></div>
+        <div class="field"><label class="f">Time out <span class="muted" style="font-weight:400">${outLocked ? "(locked)" : "(blank = still in)"}</span></label><input type="datetime-local" id="eOut" value="${toLocalInput(r?.outAt)}"${outLocked ? " readonly disabled" : ""}></div>
       </div>
+      ${inLocked || outLocked ? `<div class="note"><strong>Locked</strong> means a photo was taken at that exact moment, so it is a record of what happened rather than someone's recollection of it. It can't be retyped. ${inLocked && outLocked ? "Both times here were tapped." : inLocked ? "The time out can still be set." : "The time in can still be set."} If a locked time is genuinely wrong, delete the whole entry and add it again as a manual one, so the record shows it was rebuilt by hand.</div>` : ""}
+      ${!isNew && r.autoClosed ? `<div class="note" style="border-left:3px solid var(--warn)"><strong>The app filled this time out in.</strong> Nobody tapped out, so it was closed at the rostered end time — that is a guess, not a record, and you should replace it with the real time if you know it.</div>` : ""}
       <div id="eSpan"></div>
       <div class="field"><label class="f">Note</label><input id="eNote" value="${esc(r?.inNote || "")}" placeholder="e.g. covering for Allen"></div>
       <div class="field">
@@ -2366,11 +2492,15 @@ function editRecord(id) {
       {
         label: "Save", cls: "primary", onClick: (el, close) => {
           const empId = $("#eEmp", el).value;
-          const inV = $("#eIn", el).value, outV = $("#eOut", el).value;
-          if (!inV) { toast("Time in is required"); return; }
-          const inAt = new Date(inV).getTime();
-          const outAt = outV ? new Date(outV).getTime() : null;
+          // A locked field is disabled, so the browser may hand back nothing.
+          // Fall back to the stored time rather than treating it as cleared.
+          const inV = inLocked ? "" : $("#eIn", el).value;
+          const outV = outLocked ? "" : $("#eOut", el).value;
+          if (!inLocked && !inV) { toast("Time in is required"); return; }
+          const inAt = inLocked ? r.inAt : new Date(inV).getTime();
+          const outAt = outLocked ? r.outAt : (outV ? new Date(outV).getTime() : null);
           if (outAt && outAt <= inAt) { toast("Time out must be after time in"); return; }
+
           const restOverride = $("#eRest", el).value || null;
           const otApproved = $("#eOt", el).checked;
           const otBlock = $("#eOtBlock", el).checked;
@@ -2408,8 +2538,10 @@ function editRecord(id) {
         span.innerHTML = `<div class="strip err"><span class="dot"></span>
           That's <strong>${hm(hrs)}</strong> — longer than a full day, so this will pay nothing until it's corrected.
           The dates are <strong>${inEl.value.slice(0, 10)}</strong> and <strong>${outEl.value.slice(0, 10)}</strong>;
-          did you mean them to be the same day?
-          <button class="btn sm" id="eSameDay" style="margin-left:8px">Use the same day</button></div>`;
+          ${outLocked
+            ? `Both times were really tapped, so they can't be retyped — delete this entry and re-add it by hand if it's wrong.`
+            : `did you mean them to be the same day?
+          <button class="btn sm" id="eSameDay" style="margin-left:8px">Use the same day</button>`}</div>`;
         const b2 = $("#eSameDay", el);
         if (b2) b2.onclick = () => { outEl.value = inEl.value.slice(0, 10) + outEl.value.slice(10); draw(); };
       } else {
@@ -2723,7 +2855,7 @@ function editEmp(id) {
   modal({
     title: e ? "Edit employee" : "Add employee",
     body: `
-      <div class="field"><label class="f">Full name *</label><input id="fName" value="${esc(e?.name || "")}" placeholder="Juan Dela Cruz"></div>
+      <div class="field"><label class="f">Full name *</label><input id="fName" value="${esc(e?.name || "")}" placeholder="First name Last name"></div>
       <div class="grid2">
         <div class="field"><label class="f">Position</label><input id="fRole" value="${esc(e?.role || "")}" placeholder="Barista"></div>
         <div class="field"><label class="f">Hourly rate (${SETTINGS.currency})</label><input id="fRate" type="number" step="0.01" min="0" value="${e?.rate ?? 0}"></div>
@@ -2874,10 +3006,9 @@ function renderSettings() {
       <div class="grid3">
         <div class="field"><label class="f">Default shift start</label><input type="time" id="sStart" value="${s.shiftStart}"></div>
         <div class="field"><label class="f">Default shift end</label><input type="time" id="sEnd" value="${s.shiftEnd || "17:00"}"></div>
-        <div class="field"><label class="f">Grace period (min)</label><input type="number" id="sGrace" min="0" value="${s.gracePeriodMin}"></div>
+        <div class="field"><label class="f">Overtime starts after (min)</label><input type="number" id="sOtMin" min="0" value="${s.otMinMinutes ?? 15}"></div>
       </div>
       <div class="grid3">
-        <div class="field"><label class="f">Overtime starts after (min)</label><input type="number" id="sOtMin" min="0" value="${s.otMinMinutes ?? 15}"></div>
         <div class="field"><label class="f">Auto-close after (hrs past end)</label><input type="number" id="sAutoClose" min="0" step="0.5" value="${s.autoCloseHours ?? 2}"></div>
         <div class="field"><label class="f">Pay period</label><select id="sPeriod">
           <option value="weekly" ${s.payPeriod === "weekly" ? "selected" : ""}>Weekly (Mon–Sun)</option>
@@ -2889,7 +3020,7 @@ function renderSettings() {
       <div class="note" style="margin-top:12px">
         <strong>Pay is based on each person's rostered shift, set per day in the Employees tab.</strong> An 8-hour shift pays 8 hours; a 5-hour shift pays 5. Clocking in early or out a little late changes nothing.
         <br><br>The clock is what catches exceptions: <strong>late</strong> minutes and <strong>early-out</strong> minutes are deducted per minute, and time past the shift end is <strong>overtime</strong> that pays nothing until you approve it on that record.
-        <br><br><strong>Grace period</strong> is free minutes before lateness is charged${Number(s.gracePeriodMin) ? ` — currently ${s.gracePeriodMin} min` : " — currently 0, so every late minute counts"}.
+        <br><br>There is no grace period: every late minute counts.
         <br><br><strong>Regular hours / day</strong> and the OT multiplier above are only used as a fallback for anyone with no schedule set.
       </div>
     </div>
@@ -3037,7 +3168,6 @@ function renderSettings() {
       maxShiftHours: clamp(Number($("#sMax").value) || 16, 1, 24),
       shiftStart: $("#sStart").value || "08:00",
       shiftEnd: $("#sEnd").value || "17:00",
-      gracePeriodMin: Math.max(0, Number($("#sGrace").value) || 0),
       otMinMinutes: Math.max(0, Number($("#sOtMin").value) || 0),
       autoCloseHours: Math.max(0, Number($("#sAutoClose").value) || 0),
       deductUndertime: $("#sUnder").checked,
@@ -3067,7 +3197,7 @@ function renderSettings() {
       toast("Admin and staff keys must be different — staff key cleared.", 5000);
     }
     setDeviceName($("#sDevice").value.trim() || deviceName());
-    persistSet(); applyTheme(); paintSyncBadges(); PF.from = ""; RF.from = ""; renderSettings(); toast("Settings saved");
+    persistSet(); Sync.pushPayRules(); applyTheme(); paintSyncBadges(); PF.from = ""; RF.from = ""; renderSettings(); toast("Settings saved");
   };
 
   // staff share link
@@ -3460,6 +3590,10 @@ const CAME_FROM_LINK = applySetupLink();
   });
   if (n) persistRec();
 })();
+
+/* Sweep out the invented staff an older version left behind, on every load and
+   without being asked. Nobody should have to delete the same three names again. */
+dropDemoStaff();
 
 applyTheme();
 renderEmpList();
