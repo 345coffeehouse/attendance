@@ -530,6 +530,7 @@ const LS = {
   rec: "att.records.v1",
   set: "att.settings.v1",
   adj: "att.adjustments.v1",
+  gone: "att.removed.v1",
 };
 function load(key, fallback) {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
@@ -696,6 +697,32 @@ function dropDemoStaff() {
   }
   return removed;
 }
+
+/* ===================================================================
+   REMOVED STAFF — why a tombstone list exists
+   ===================================================================
+   Deleting someone who had ever clocked in did not stick. Two separate
+   mechanisms put them back, and between them they were unbeatable:
+
+     1. The Sheet REFUSED the roster upload. A guard there rejects any
+        roster that drops a person with attendance, because that is what
+        the sample-staff wipe looked like. It refused silently, so the
+        app said "Deleted" and nothing had happened.
+     2. Even after a clean delete, PULLING their old records recreated
+        them — an unknown employee id on a record was treated as a
+        person this device had not heard of yet, and re-added.
+
+   A tombstone settles both. The id is remembered as deliberately gone,
+   so a pull never resurrects it, and the Sheet is told to drop it rather
+   than guessing from what is missing. Their name and rate are kept here
+   so old rows still read properly and old payroll still adds up — the
+   person is gone from the roster, not erased from history.
+   =================================================================== */
+let REMOVED = load(LS.gone, []);
+const persistGone = () => save(LS.gone, REMOVED);
+const isRemoved = id => REMOVED.some(x => x.id === id);
+/** Name and rate of someone deleted, so their old records still read properly. */
+const removedById = id => REMOVED.find(x => x.id === id) || null;
 
 const persistEmp = () => save(LS.emp, EMPLOYEES);
 const persistRec = () => save(LS.rec, RECORDS);
@@ -1009,8 +1036,20 @@ const Sync = {
       return;
     }
     try {
-      await this.call({ action: "pushEmployees", employees: EMPLOYEES });
+      // `removed` tells the Sheet which people were deleted on purpose. Without
+      // it the Sheet can only see that someone is missing, which is exactly what
+      // a wiped device looks like — so it refused, silently, and they came back.
+      const res = await this.call({
+        action: "pushEmployees",
+        employees: EMPLOYEES,
+        removed: REMOVED.map(x => x.id)
+      });
+      if (res && res.refused) {
+        console.warn("roster upload refused by the Sheet:", res.reason);
+        return res;
+      }
       localStorage.setItem("att.rosterHash", rosterHash());
+      return res;
     } catch (e) { /* non-critical — retried on the next flush */ }
   },
 
@@ -1054,7 +1093,9 @@ const Sync = {
    */
   reconcileEmployee(incoming) {
     if (!incoming || !incoming.id) return;
-    const byId = empById(incoming.id);
+    // Deliberately deleted. Never put them back, however they arrive.
+    if (isRemoved(incoming.id)) return;
+    const byId = EMPLOYEES.find(e => e.id === incoming.id);
     if (byId) { Object.assign(byId, incoming, { fromSheet: false }); return; }
 
     const key = String(incoming.name || "").trim().toLowerCase();
@@ -1140,7 +1181,7 @@ const Sync = {
       };
       if (!local) {
         // employee may not exist on this device — keep a readable name
-        if (r.empId && !empById(r.empId) && r.empName) {
+        if (r.empId && !empById(r.empId) && !isRemoved(r.empId) && r.empName) {
           this.reconcileEmployee({ id: r.empId, name: r.empName, role: "", rate: 0, pin: "", active: true });
         }
         RECORDS.push(mapped); added++;
@@ -1472,11 +1513,15 @@ function computeShift(rec, emp, st, employees) {
     out.scheduled = sched.hours;
 
     const lateMs = rec.inAt - startMs;
-    if (lateMs > 0) { out.lateMin = Math.round(lateMs / 60000); out.flags.push("late"); }
+    /* FLOOR, never round. At 7:36:30 on a 7:30 shift someone is six minutes
+       and thirty seconds late. Rounding charged them a seventh minute that had
+       not yet happened, and the row showed "7:36 AM · 7m LATE", which reads as
+       an arithmetic error because it is one. Charge whole elapsed minutes only. */
+    if (lateMs > 0) { out.lateMin = Math.floor(lateMs / 60000); out.flags.push("late"); }
 
     if (st.deductUndertime !== false) {
       const underMs = endMs - rec.outAt;
-      if (underMs > 0) { out.underMin = Math.round(underMs / 60000); out.flags.push("undertime"); }
+      if (underMs > 0) { out.underMin = Math.floor(underMs / 60000); out.flags.push("undertime"); }
     }
 
     regular = Math.max(0, sched.hours - (out.lateMin + out.underMin) / 60);
@@ -1527,7 +1572,9 @@ function money(n) {
   const v = Number(n || 0);
   return SETTINGS.currency + v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
-const empById = id => EMPLOYEES.find(e => e.id === id);
+/* Falls back to the tombstone so a deleted person's old rows still show their
+   name and still compute their pay. They are off the roster, not erased. */
+const empById = id => EMPLOYEES.find(e => e.id === id) || removedById(id) || undefined;
 
 /* ------------------------- pay periods ------------------------- */
 function periodsFor(year, month) { // month 0-11
@@ -2874,16 +2921,32 @@ function editEmp(id) {
       ...(e ? [{
         label: "Delete", cls: "danger", onClick: (el, close) => {
           close();
-          confirmBox(`Delete <strong>${esc(e.name)}</strong>? Their attendance records stay but will show as ‹deleted›. Consider setting them Inactive instead.`, async () => {
-            EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id);
-            persistEmp();
-            // Saving an employee pushed the roster; deleting one did not, so the
-            // Sheet kept them and the next sync pulled them straight back —
-            // deleting the same person over and over with nothing sticking.
-            await Sync.pushEmployees();
-            renderTab(CUR_TAB);
-            toast(Sync.on ? "Deleted here and in the Sheet" : "Employee deleted");
-          });
+          const shifts = RECORDS.filter(x => x.empId === e.id).length;
+          confirmBox(
+            `Delete <strong>${esc(e.name)}</strong> from the roster?`
+            + (shifts
+              ? `<br><br>They have <strong>${shifts}</strong> recorded shift${shifts > 1 ? "s" : ""}. Those stay in the Records tab and in your Sheet with their name and rate, so old payroll still adds up — but they're off the roster and off the clock-in screen for good.`
+              : `<br><br>They have no attendance records, so nothing else is affected.`)
+            + `<br><br>If they might come back, set them <strong>Inactive</strong> instead — that's reversible, this isn't.`,
+            async () => {
+              // The tombstone comes FIRST. If the push fails or the browser is
+              // closed mid-way, the delete still holds and the next pull can't
+              // undo it. Carrying the name and rate keeps their old rows readable.
+              if (!isRemoved(e.id)) {
+                REMOVED.push({ id: e.id, name: e.name, role: e.role || "", rate: Number(e.rate) || 0, active: false, weekSchedule: e.weekSchedule || [], removedAt: Date.now() });
+                persistGone();
+              }
+              EMPLOYEES = EMPLOYEES.filter(x => x.id !== e.id);
+              persistEmp();
+              // Saving an employee pushed the roster; deleting one did not, so the
+              // Sheet kept them and the next sync pulled them straight back —
+              // deleting the same person over and over with nothing sticking.
+              const res = await Sync.pushEmployees();
+              renderTab(CUR_TAB);
+              if (!Sync.on) toast("Removed from the roster on this device");
+              else if (res && res.refused) toast("Removed here, but the Sheet refused the change — press ⟳ Sync and try again", 7000);
+              else toast(`${e.name} removed from the roster`, 4000);
+            }, "Delete");
         }
       }] : []),
       { label: "Cancel" },
@@ -3461,7 +3524,7 @@ async function doBackup(withPhotos) {
     v: 2, exportedAt: new Date().toISOString(),
     note: "Keys and the admin PIN are deliberately excluded. Re-enter them in Settings after restoring.",
     settings: settingsWithoutSecrets(),
-    employees: EMPLOYEES, records: RECORDS, adjustments: ADJUSTMENTS,
+    employees: EMPLOYEES, records: RECORDS, adjustments: ADJUSTMENTS, removed: REMOVED,
     photos: withPhotos ? await PhotoDB.all() : null
   };
   download(`attendance-backup-${todayKey()}${withPhotos ? "-with-photos" : ""}.json`, JSON.stringify(data));
@@ -3477,6 +3540,10 @@ function restoreBackup(e) {
       EMPLOYEES = d.employees; RECORDS = d.records;
       ADJUSTMENTS = Array.isArray(d.adjustments) ? d.adjustments : [];
       persistAdj();
+      // Restoring must not undo deletions. A backup taken before someone was
+      // removed would otherwise put them straight back on the roster.
+      REMOVED = Array.isArray(d.removed) ? d.removed : REMOVED;
+      persistGone();
       if (d.settings) {
         // Keep this device's own credentials. A newer backup won't contain any,
         // and an older one must not be allowed to overwrite a rotated key or
