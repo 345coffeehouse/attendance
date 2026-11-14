@@ -522,6 +522,8 @@ const SCRIPT_NEEDS = [
   { id: "adjustments", label: "cash advances and deductions" },
   { id: "roster-guard", label: "protection against the roster being wiped" },
   { id: "pay-rules", label: "shared pay rules, so every device agrees" },
+  { id: "staff-removal", label: "deleting staff who have attendance history" },
+  { id: "floor-late", label: "charging whole late minutes only" },
 ];
 
 /* ------------------------- storage ------------------------- */
@@ -814,6 +816,11 @@ function applySetupLink() {
 }
 /** True on your laptop, false on any phone set up from the staff link. */
 function isAdminDevice() { return SETTINGS.syncRole !== "staff" && !PREVIEW_STAFF; }
+/* The owner's own device, as distinct from HR's. Both are "admin" everywhere
+   else; this gates the one thing that is May's alone — unlocking a clock time
+   that has a photo behind it. Unknown means NOT the owner: a device that has
+   never reached the script, or is running an old one, gets the safe answer. */
+function isOwnerDevice() { return SETTINGS.syncTier === "owner" && !PREVIEW_STAFF; }
 /* Whether this device is *really* set up as admin, ignoring any preview override.
    Used to decide whether the preview toggle itself should be offered. */
 function isTrulyAdminDevice() { return SETTINGS.syncRole !== "staff"; }
@@ -926,7 +933,12 @@ const Sync = {
   },
 
   async ping() {
-    return this.call({ action: "ping" }, 20000);
+    const r = await this.call({ action: "ping" }, 20000);
+    // Remember which key this device holds. Only the script can tell the owner's
+    // key from HR's — they have identical permissions everywhere else — so this
+    // is the one fact a device cannot work out for itself.
+    if (r && r.tier && SETTINGS.syncTier !== r.tier) { SETTINGS.syncTier = r.tier; persistSet(); }
+    return r;
   },
 
   /** Build the wire format for one local record. */
@@ -943,7 +955,7 @@ const Sync = {
       otBlock: !!rec.otBlock,
       shiftOverride: rec.shiftOverride || "",
       autoClosed: !!rec.autoClosed,
-      edited: !!rec.edited,
+      edited: !!rec.edited, unlocked: !!rec.unlocked,
       roster: EMPLOYEES.map(x => ({ weekSchedule: x.weekSchedule || [] })),   // lets the backend match swaps too
       employee: { id: e.id, name: e.name || "(unknown)", role: e.role || "", rate: Number(e.rate || 0), weekSchedule: e.weekSchedule || null, shiftStart: e.shiftStart || "", restDays: e.restDays || [] },
       inPhotoId: rec.inPhotoDriveId || "", outPhotoId: rec.outPhotoDriveId || ""
@@ -1177,7 +1189,7 @@ const Sync = {
         inNote: r.inNote || "", outNote: "",
         restOverride: r.restOverride || null, otApproved: !!r.otApproved,
         otBlock: !!r.otBlock, shiftOverride: r.shiftOverride || null, autoClosed: !!r.autoClosed,
-        edited: r.edited, remote: true, device: r.device || "", createdAt: r.inAt
+        edited: r.edited, unlocked: !!r.unlocked, remote: true, device: r.device || "", createdAt: r.inAt
       };
       if (!local) {
         // employee may not exist on this device — keep a readable name
@@ -2388,6 +2400,7 @@ function drawRecordTable() {
     if (c.flags.includes("unscheduled")) flags.push(`<span class="pill warnp" title="Worked on a day their schedule says off — a cover shift or a swap. Open Edit to record which it was.">COVER?</span>`);
     if (c.flags.includes("override")) flags.push(`<span class="pill out" title="Day type set by hand">MANUAL DAY TYPE</span>`);
     if (c.flags.includes("too-long")) flags.push(`<span class="pill dangerp">CHECK</span>`);
+    if (r.unlocked) flags.push(`<span class="pill warnp" title="${esc(r.outNote || "")}">UNLOCKED</span>`);
     if (r.edited) flags.push(`<span class="pill out">EDITED</span>`);
     if (r.remote) flags.push(`<span class="pill out" title="Came from the Google Sheet${r.device ? " · " + esc(r.device) : ""}">FROM SHEET</span>`);
     const ph = (id, url, lbl) => id ? `<img class="thumb" data-ph="${id}" data-lbl="${esc(lbl)}" loading="lazy">`
@@ -2461,6 +2474,9 @@ function editRecord(id) {
   const hasPhoto = (p, url) => !!(p || url);
   const inLocked = !isNew && !!r.inAt && hasPhoto(r.inPhoto, r.inPhotoUrl);
   const outLocked = !isNew && !!r.outAt && !r.autoClosed && hasPhoto(r.outPhoto, r.outPhotoUrl);
+  // Set by the owner-only unlock below. Scoped to this one modal, so it can
+  // never leak into the next record somebody opens.
+  const UNLOCK = { on: false, why: "" };
 
   const m = modal({
     title: isNew ? "Add manual entry" : "Edit entry",
@@ -2471,7 +2487,10 @@ function editRecord(id) {
         <div class="field"><label class="f">Time in${inLocked ? ` <span class="muted" style="font-weight:400">(locked)</span>` : ""}</label><input type="datetime-local" id="eIn" value="${toLocalInput(r?.inAt) || toLocalInput(Date.now())}"${inLocked ? " readonly disabled" : ""}></div>
         <div class="field"><label class="f">Time out <span class="muted" style="font-weight:400">${outLocked ? "(locked)" : "(blank = still in)"}</span></label><input type="datetime-local" id="eOut" value="${toLocalInput(r?.outAt)}"${outLocked ? " readonly disabled" : ""}></div>
       </div>
-      ${inLocked || outLocked ? `<div class="note"><strong>Locked</strong> means a photo was taken at that exact moment, so it is a record of what happened rather than someone's recollection of it. It can't be retyped. ${inLocked && outLocked ? "Both times here were tapped." : inLocked ? "The time out can still be set." : "The time in can still be set."} If a locked time is genuinely wrong, delete the whole entry and add it again as a manual one, so the record shows it was rebuilt by hand.</div>` : ""}
+      ${inLocked || outLocked ? `<div class="note"><strong>Locked</strong> means a photo was taken at that exact moment, so it is a record of what happened rather than someone's recollection of it. It can't be retyped. ${inLocked && outLocked ? "Both times here were tapped." : inLocked ? "The time out can still be set." : "The time in can still be set."}
+        ${isOwnerDevice()
+          ? `<br><br><button class="btn sm" id="eUnlock" type="button">Unlock these times</button> <span class="muted">Owner only. You'll be asked why.</span>`
+          : `<br><br>If a locked time is genuinely wrong, ask May — only the owner's device can unlock one. Please don't delete the entry to work around it.`}</div>` : ""}
       ${!isNew && r.autoClosed ? `<div class="note" style="border-left:3px solid var(--warn)"><strong>The app filled this time out in.</strong> Nobody tapped out, so it was closed at the rostered end time — that is a guess, not a record, and you should replace it with the real time if you know it.</div>` : ""}
       <div id="eSpan"></div>
       <div class="field"><label class="f">Note</label><input id="eNote" value="${esc(r?.inNote || "")}" placeholder="e.g. covering for Allen"></div>
@@ -2541,11 +2560,13 @@ function editRecord(id) {
           const empId = $("#eEmp", el).value;
           // A locked field is disabled, so the browser may hand back nothing.
           // Fall back to the stored time rather than treating it as cleared.
-          const inV = inLocked ? "" : $("#eIn", el).value;
-          const outV = outLocked ? "" : $("#eOut", el).value;
-          if (!inLocked && !inV) { toast("Time in is required"); return; }
-          const inAt = inLocked ? r.inAt : new Date(inV).getTime();
-          const outAt = outLocked ? r.outAt : (outV ? new Date(outV).getTime() : null);
+          const lockIn = inLocked && !UNLOCK.on;
+          const lockOut = outLocked && !UNLOCK.on;
+          const inV = lockIn ? "" : $("#eIn", el).value;
+          const outV = lockOut ? "" : $("#eOut", el).value;
+          if (!lockIn && !inV) { toast("Time in is required"); return; }
+          const inAt = lockIn ? r.inAt : new Date(inV).getTime();
+          const outAt = lockOut ? r.outAt : (outV ? new Date(outV).getTime() : null);
           if (outAt && outAt <= inAt) { toast("Time out must be after time in"); return; }
 
           const restOverride = $("#eRest", el).value || null;
@@ -2558,7 +2579,17 @@ function editRecord(id) {
             RECORDS.push(saved);
           } else {
             // entering a real time out clears the auto-close marker
+            const movedIn = UNLOCK.on && r.inAt && Math.abs(inAt - r.inAt) > 60000;
+            const movedOut = UNLOCK.on && r.outAt && outAt && Math.abs(outAt - r.outAt) > 60000;
             Object.assign(r, { empId, inAt, outAt, date: dayKey(new Date(inAt)), inNote: $("#eNote", el).value, restOverride, otApproved, otBlock, shiftOverride, autoClosed: false, edited: true });
+            // The reason goes ON the record, in the Sheet's Notes column, where
+            // anyone reviewing the payout months later will actually see it.
+            if (movedIn || movedOut) {
+              const what = [movedIn ? "time in" : "", movedOut ? "time out" : ""].filter(Boolean).join(" and ");
+              const stamp = `Unlocked by ${deviceName()} on ${fmtDateShort(todayKey())}: ${what} changed — ${UNLOCK.why}`;
+              r.outNote = (r.outNote ? r.outNote + " · " : "") + stamp;
+              r.unlocked = true;
+            }
             saved = r;
           }
           persistRec(); Sync.queue(saved.id); Sync.flush(true);
@@ -2573,6 +2604,41 @@ function editRecord(id) {
   setTimeout(() => {
     const el = $("#modalRoot .overlay:last-child"); if (!el) return;
     const inEl = $("#eIn", el), outEl = $("#eOut", el), span = $("#eSpan", el);
+
+    /* THE UNLOCK — owner only, and it costs a sentence.
+       Deleting and rebuilding the entry was the only way to correct a locked
+       time, and that strips the photos off a record that is already disputed.
+       This keeps the photos, keeps the history, and makes the person doing it
+       say why — so the reason lives on the record instead of in someone's
+       memory of a conversation three weeks ago. */
+    const unlockBtn = $("#eUnlock", el);
+    if (unlockBtn) unlockBtn.onclick = () => {
+      const box = document.createElement("div");
+      box.className = "note";
+      box.style.borderLeft = "3px solid var(--warn)";
+      box.innerHTML = `<strong>Why are you changing a photographed time?</strong>
+        <br><span class="muted">This is saved onto the record. Be specific — "Allen confirmed he finished at 10 PM" is useful; "fixed" is not.</span>
+        <input id="eReason" placeholder="e.g. Allen confirmed he worked until 10 PM" style="margin-top:8px">
+        <div class="row" style="gap:6px;margin-top:8px">
+          <button class="btn sm primary" id="eReasonOk" type="button">Unlock</button>
+          <button class="btn sm" id="eReasonNo" type="button">Keep locked</button>
+        </div>`;
+      unlockBtn.parentNode.replaceChild(box, unlockBtn);
+      const reason = $("#eReason", el);
+      reason.focus();
+      $("#eReasonNo", el).onclick = () => { box.remove(); };
+      $("#eReasonOk", el).onclick = () => {
+        const why = reason.value.trim();
+        if (why.length < 8) { toast("Please say why, in a few words at least"); reason.focus(); return; }
+        UNLOCK.on = true; UNLOCK.why = why;
+        inEl.removeAttribute("readonly"); inEl.removeAttribute("disabled");
+        outEl.removeAttribute("readonly"); outEl.removeAttribute("disabled");
+        box.innerHTML = `<strong>Unlocked.</strong> Both times can now be changed, and this will be saved on the record:<br><em>${esc(why)}</em>`;
+        toast("Unlocked — the reason will be saved with the record");
+        draw();
+      };
+    };
+
     const draw = () => {
       const a = inEl.value ? new Date(inEl.value).getTime() : null;
       const b = outEl.value ? new Date(outEl.value).getTime() : null;
@@ -2585,7 +2651,7 @@ function editRecord(id) {
         span.innerHTML = `<div class="strip err"><span class="dot"></span>
           That's <strong>${hm(hrs)}</strong> — longer than a full day, so this will pay nothing until it's corrected.
           The dates are <strong>${inEl.value.slice(0, 10)}</strong> and <strong>${outEl.value.slice(0, 10)}</strong>;
-          ${outLocked
+          ${outLocked && !UNLOCK.on
             ? `Both times were really tapped, so they can't be retyped — delete this entry and re-add it by hand if it's wrong.`
             : `did you mean them to be the same day?
           <button class="btn sm" id="eSameDay" style="margin-left:8px">Use the same day</button>`}</div>`;
